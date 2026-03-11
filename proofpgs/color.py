@@ -40,7 +40,7 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     """Build a 256x4 RGBA LUT from HDR (BT.2020+PQ) palette entries.
 
     Pipeline:
-      YCbCr (BT.2020, full range)
+      YCbCr (BT.2020, limited range)
         -> R'G'B' (BT.2020 non-linear, PQ encoded)
         -> linear RGB (BT.2020, absolute nits via PQ EOTF)
         -> linear RGB (BT.709, via primary matrix)
@@ -59,10 +59,12 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     Cb = vals[:, 2]
     A  = vals[:, 3]
 
-    # --- Step 1: BT.2020 YCbCr (full range) -> R'G'B' (PQ encoded, 0..1) ---
-    Yn  = Y  / 255.0
-    Crn = (Cr - 128.0) / 255.0
-    Cbn = (Cb - 128.0) / 255.0
+    # --- Step 1: BT.2020 YCbCr (limited range) -> R'G'B' (PQ encoded, 0..1) ---
+    # BD/UHD BD uses limited-range YCbCr: Y 16-235 (219 levels),
+    # Cb/Cr 16-240 (224 levels, centred at 128).
+    Yn  = (Y  - 16.0) / 219.0
+    Crn = (Cr - 128.0) / 224.0
+    Cbn = (Cb - 128.0) / 224.0
 
     R_pq = np.clip(Yn + 1.4746  * Crn,                          0.0, 1.0)
     G_pq = np.clip(Yn - 0.1645  * Cbn - 0.5713 * Crn,           0.0, 1.0)
@@ -107,9 +109,9 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
         B_709 = np.clip(B_709, 0.0, 1.0)
 
     # --- Step 5: sRGB gamma encoding ---
-    R_out = np.clip(srgb_gamma(R_709) * 255.0, 0, 255).astype(np.uint8)
-    G_out = np.clip(srgb_gamma(G_709) * 255.0, 0, 255).astype(np.uint8)
-    B_out = np.clip(srgb_gamma(B_709) * 255.0, 0, 255).astype(np.uint8)
+    R_out = np.clip(np.round(srgb_gamma(R_709) * 255.0), 0, 255).astype(np.uint8)
+    G_out = np.clip(np.round(srgb_gamma(G_709) * 255.0), 0, 255).astype(np.uint8)
+    B_out = np.clip(np.round(srgb_gamma(B_709) * 255.0), 0, 255).astype(np.uint8)
 
     lut = np.zeros((256, 4), dtype=np.uint8)
     for i, eid in enumerate(ids):
@@ -122,7 +124,7 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     """Build a 256x4 RGBA LUT from SDR (BT.709) palette entries.
 
     Pipeline:
-      YCbCr (BT.709, full range)
+      YCbCr (BT.709, limited range)
         -> R'G'B' (BT.709 gamma)
         -> sRGB gamma (already compatible — BT.709 gamma ~ sRGB)
         -> uint8 RGBA
@@ -138,19 +140,20 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     Cb = vals[:, 2]
     A  = vals[:, 3]
 
-    # BT.709 full-range YCbCr -> R'G'B' (already gamma-encoded)
-    Yn  = Y  / 255.0
-    Crn = (Cr - 128.0) / 255.0
-    Cbn = (Cb - 128.0) / 255.0
+    # BT.709 limited-range YCbCr -> R'G'B' (already gamma-encoded)
+    # BD uses limited-range: Y 16-235 (219 levels), Cb/Cr 16-240 (224 levels).
+    Yn  = (Y  - 16.0) / 219.0
+    Crn = (Cr - 128.0) / 224.0
+    Cbn = (Cb - 128.0) / 224.0
 
     R = np.clip(Yn + 1.5748  * Crn,                        0.0, 1.0)
     G = np.clip(Yn - 0.1873  * Cbn - 0.4681 * Crn,         0.0, 1.0)
     B = np.clip(Yn + 1.8556  * Cbn,                        0.0, 1.0)
 
     # BT.709 gamma is close enough to sRGB for display — no further transform needed
-    R_out = (R * 255.0).astype(np.uint8)
-    G_out = (G * 255.0).astype(np.uint8)
-    B_out = (B * 255.0).astype(np.uint8)
+    R_out = np.clip(np.round(R * 255.0), 0, 255).astype(np.uint8)
+    G_out = np.clip(np.round(G * 255.0), 0, 255).astype(np.uint8)
+    B_out = np.clip(np.round(B * 255.0), 0, 255).astype(np.uint8)
 
     lut = np.zeros((256, 4), dtype=np.uint8)
     for i, eid in enumerate(ids):
