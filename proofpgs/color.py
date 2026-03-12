@@ -126,7 +126,8 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     Pipeline:
       YCbCr (BT.709, limited range)
         -> R'G'B' (BT.709 gamma)
-        -> sRGB gamma (already compatible — BT.709 gamma ~ sRGB)
+        -> linear light (BT.1886 EOTF, gamma 2.4)
+        -> sRGB gamma encoding
         -> uint8 RGBA
     """
     if not entries:
@@ -150,10 +151,16 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     G = np.clip(Yn - 0.1873  * Cbn - 0.4681 * Crn,         0.0, 1.0)
     B = np.clip(Yn + 1.8556  * Cbn,                        0.0, 1.0)
 
-    # BT.709 gamma is close enough to sRGB for display — no further transform needed
-    R_out = np.clip(np.round(R * 255.0), 0, 255).astype(np.uint8)
-    G_out = np.clip(np.round(G * 255.0), 0, 255).astype(np.uint8)
-    B_out = np.clip(np.round(B * 255.0), 0, 255).astype(np.uint8)
+    # BD SDR is designed for BT.1886 EOTF (gamma 2.4).  PC monitors use sRGB
+    # EOTF (~gamma 2.2).  Linearise with BT.1886 then re-encode as sRGB so the
+    # PNG looks correct on a PC display.
+    R_lin = np.power(R, 2.4)
+    G_lin = np.power(G, 2.4)
+    B_lin = np.power(B, 2.4)
+
+    R_out = np.clip(np.round(srgb_gamma(R_lin) * 255.0), 0, 255).astype(np.uint8)
+    G_out = np.clip(np.round(srgb_gamma(G_lin) * 255.0), 0, 255).astype(np.uint8)
+    B_out = np.clip(np.round(srgb_gamma(B_lin) * 255.0), 0, 255).astype(np.uint8)
 
     lut = np.zeros((256, 4), dtype=np.uint8)
     for i, eid in enumerate(ids):
