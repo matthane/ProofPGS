@@ -8,12 +8,26 @@ import tempfile
 
 from .parser import read_sup, ds_has_content
 from .renderer import process_display_sets
+from .detect import detect_from_palettes, format_detection
 from .ffmpeg import (
     check_ffmpeg, probe_pgs_tracks, SAMPLE_SECONDS,
     extract_all_pgs_tracks, build_track_folder_name,
     extract_track_streaming,
 )
 from .interactive import select_tracks_interactive, select_count_interactive
+
+# Seconds of mid-file data to extract per track for color space detection
+# when no preview cache exists (e.g. MKV with known frame counts).
+# Must be long enough to reliably capture at least a few subtitle display
+# sets — 30s was too short for films with sparse subtitles.
+_DETECT_SECONDS = 120
+
+
+def _resolve_auto_mode(detection: dict) -> str:
+    """Resolve 'auto' mode using a detection result. Returns resolved mode."""
+    if detection["verdict"] is not None:
+        return detection["verdict"]
+    return "compare"
 
 
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
@@ -22,7 +36,22 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     display_sets = read_sup(sup_path)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
     print(f"  Found {total} subtitle display sets ({len(display_sets)} total incl. clears).")
-    print(f"  Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+
+    # Color space detection
+    detection = detect_from_palettes(display_sets)
+    det_str = format_detection(detection)
+    print(f"  Detected: {det_str}")
+
+    if mode == "auto":
+        mode = _resolve_auto_mode(detection)
+        print(f"  Mode: {mode.upper()} (auto-detected)  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+    else:
+        if (detection["verdict"] is not None
+                and detection["verdict"] != mode
+                and mode in ("hdr", "sdr")):
+            print(f"  WARNING: --mode {mode} specified but {detection['verdict'].upper()} "
+                  f"content detected. Subtitles may appear incorrect.")
+        print(f"  Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first)
@@ -114,6 +143,42 @@ def process_container(input_path: str, out_dir: str, mode: str,
             sparse_set.add(ti)
             has_sparse = True
 
+    # --- Per-track color space detection ---
+    # Use preview_cache data where available; for tracks without cached
+    # data (e.g. MKV with NUMBER_OF_FRAMES), extract a short sample.
+    detect_midpoint = None
+    if duration_s and duration_s > 0:
+        detect_midpoint = max(0, (duration_s - _DETECT_SECONDS) / 2)
+
+    for ti, t in enumerate(tracks):
+        if ti in preview_cache and preview_cache[ti]:
+            t["detection"] = detect_from_palettes(preview_cache[ti])
+        else:
+            # Extract a sample from mid-file for detection.
+            try:
+                sample_ds = extract_track_streaming(
+                    ffmpeg_path, input_path, t["index"],
+                    seek_s=detect_midpoint,
+                    read_duration_s=_DETECT_SECONDS,
+                )
+            except Exception:
+                sample_ds = []
+            detection = detect_from_palettes(sample_ds)
+            # If mid-file yielded no verdict (e.g. landed in a subtitle
+            # gap), retry from the beginning of the file.
+            if detection["verdict"] is None and detect_midpoint:
+                try:
+                    sample_ds = extract_track_streaming(
+                        ffmpeg_path, input_path, t["index"],
+                        read_duration_s=_DETECT_SECONDS,
+                    )
+                except Exception:
+                    sample_ds = []
+                fallback = detect_from_palettes(sample_ds)
+                if fallback["verdict"] is not None:
+                    detection = fallback
+            t["detection"] = detection
+
     print(f"Found {len(tracks)} PGS subtitle track(s):")
     for ti, t in enumerate(tracks):
         flags = []
@@ -130,8 +195,16 @@ def process_container(input_path: str, out_dir: str, mode: str,
         else:
             count_str = ""
         slow_warn = "  ** sparse — may be slow" if ti in sparse_set else ""
+        det = t.get("detection", {})
+        if det.get("verdict"):
+            pq = det.get("max_pq_channel", 0)
+            det_str = (f"  [{det['verdict'].upper()}, "
+                       f"PQ-max: {pq:.3f}]")
+        else:
+            det_str = ""
         print(f"  [{ti}] stream {t['index']}: "
-              f"{t['language']}{title_str}{flag_str}{count_str}{slow_warn}")
+              f"{t['language']}{title_str}{flag_str}{count_str}"
+              f"{det_str}{slow_warn}")
 
     if has_sparse:
         print()
@@ -166,11 +239,40 @@ def process_container(input_path: str, out_dir: str, mode: str,
     else:
         max_ds = None  # process all — backward-compatible default
 
+    # --- Resolve auto mode from per-track detection ---
+    if mode == "auto":
+        verdicts = set()
+        for ti in selected_indices:
+            v = tracks[ti].get("detection", {}).get("verdict")
+            if v:
+                verdicts.add(v)
+
+        if len(verdicts) == 1:
+            mode = verdicts.pop()
+            mode_note = f"{mode.upper()} (auto-detected)"
+        elif len(verdicts) > 1:
+            mode = "compare"
+            mode_note = "COMPARE (mixed color spaces detected across tracks)"
+        else:
+            mode = "compare"
+            mode_note = "COMPARE (detection inconclusive)"
+    elif mode in ("hdr", "sdr"):
+        mode_note = mode.upper()
+        # Warn if any selected track's detection conflicts
+        for ti in selected_indices:
+            det = tracks[ti].get("detection", {})
+            if det.get("verdict") and det["verdict"] != mode:
+                print(f"  WARNING: --mode {mode} specified but track {ti} "
+                      f"detected as {det['verdict'].upper()}. "
+                      f"Subtitles may appear incorrect.")
+    else:
+        mode_note = mode.upper()
+
     print()
     track_desc = ", ".join(str(i) for i in selected_indices)
     count_desc = str(max_ds) if max_ds is not None else "all"
     print(f"Processing track(s) [{track_desc}], {count_desc} display set(s) each.")
-    print(f"Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+    print(f"Mode: {mode_note}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
     print()
 
     total_saved = 0
