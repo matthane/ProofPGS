@@ -9,6 +9,14 @@ from .pipeline import process_sup_file, process_container
 
 
 def main():
+    try:
+        _main()
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)
+
+
+def _main():
     parser = argparse.ArgumentParser(
         description="PGS subtitle decoder — accepts .sup files or video "
                     "containers (MKV, M2TS, etc.).",
@@ -17,8 +25,9 @@ def main():
     parser.add_argument("input_file",
                         help="Path to a .sup file or video container "
                              "(MKV, M2TS, TS, MP4, etc.)")
-    parser.add_argument("--mode", choices=["compare", "hdr", "sdr"], default="compare",
-                        help="Output mode. compare=SDR & HDR side-by-side (default), "
+    parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr"], default="auto",
+                        help="Output mode. auto=detect color space (default), "
+                             "compare=SDR & HDR side-by-side, "
                              "hdr=BT.2020+PQ (UHD BD), sdr=BT.709 (BD)")
     parser.add_argument("--tonemap", choices=["clip", "reinhard"], default="clip",
                         help="HDR->SDR tonemapping. clip=hard clip at 203 nits ref white "
