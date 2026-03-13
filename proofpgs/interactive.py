@@ -10,9 +10,12 @@ def select_tracks_interactive(tracks: list) -> list:
     print("  [numbers]  Specific tracks, e.g. 0,2,3")
     try:
         choice = input("> ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return list(range(len(tracks)))
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)
 
     if not choice:
         return list(range(len(tracks)))
@@ -37,9 +40,12 @@ def select_count_interactive() -> int | None:
     print("  [a]        All (reads entire file)")
     try:
         choice = input("> ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return 10
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)
 
     if not choice:
         return 10

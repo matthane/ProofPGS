@@ -202,6 +202,8 @@ def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
                 except (ValueError, ZeroDivisionError):
                     pass
     finally:
+        if proc.poll() is None:
+            proc.kill()
         rc = proc.wait()
 
     if duration_s:
