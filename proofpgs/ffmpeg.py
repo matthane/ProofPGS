@@ -71,6 +71,15 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
                 except (ValueError, TypeError):
                     pass
                 break
+        # Fallback: some containers (e.g. MP4) populate nb_frames at the
+        # stream level for free — no extra probe needed.
+        if num_frames is None:
+            nb = s.get("nb_frames")
+            if nb and nb != "N/A":
+                try:
+                    num_frames = int(nb)
+                except (ValueError, TypeError):
+                    pass
         tracks.append({
             "index":      s["index"],
             "language":   tags.get("language", "und"),
@@ -80,6 +89,80 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
             "num_frames": num_frames,
         })
     return tracks, duration_s
+
+
+SAMPLE_SECONDS = 120  # 2-minute sample window for packet counting
+# A PGS display set consists of multiple segments (PCS, WDS, PDS, ODS,
+# END…).  ffprobe -count_packets counts raw segments, but MKV's
+# NUMBER_OF_FRAMES counts at the display-set level.  We normalise
+# sampled packet counts to display-set estimates using this divisor.
+SEGMENTS_PER_DS = 5
+
+
+def sample_packet_counts(ffprobe_path: str, input_path: str,
+                         stream_indices: list, duration_s: float) -> tuple:
+    """Estimate PGS display sets via a 2-min mid-file packet sample.
+
+    Samples from the midpoint to avoid intros/credits that lack subtitles.
+    Uses ffprobe -read_intervals to avoid reading the entire container.
+    Raw packet counts are divided by SEGMENTS_PER_DS to convert from
+    PGS segments to display-set estimates, matching the unit used by
+    MKV's NUMBER_OF_FRAMES tag.
+
+    Returns (counts_dict, is_estimated) where counts_dict maps
+    stream index -> estimated display-set count, and is_estimated
+    is True when the count was extrapolated from a sample.
+    Returns ({}, False) on any failure (graceful degradation).
+    """
+    if not duration_s or duration_s <= 0:
+        return {}, False
+
+    is_estimated = duration_s > SAMPLE_SECONDS
+
+    cmd = [ffprobe_path, "-v", "quiet", "-print_format", "json",
+           "-count_packets", "-show_streams", "-select_streams", "s"]
+
+    if is_estimated:
+        # File is longer than the sample window — read a 2-minute slice
+        # from the middle to avoid intros/credits that lack subtitles.
+        midpoint = max(0, (duration_s - SAMPLE_SECONDS) / 2)
+        cmd += ["-read_intervals", f"{midpoint}%+{SAMPLE_SECONDS}"]
+
+    # Short files: skip -read_intervals and just count the whole file.
+    cmd.append(input_path)
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                check=True)
+    except subprocess.CalledProcessError:
+        return {}, False
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}, False
+
+    counts = {}
+    for s in data.get("streams", []):
+        idx = s.get("index")
+        if idx not in stream_indices:
+            continue
+        nb = s.get("nb_read_packets")
+        if nb is None:
+            continue
+        try:
+            sample_count = int(nb)
+        except (ValueError, TypeError):
+            continue
+        # Convert raw segment count to display-set estimate, then
+        # extrapolate to the full duration if we only sampled a window.
+        ds_count = sample_count / SEGMENTS_PER_DS
+        if is_estimated:
+            counts[idx] = round(ds_count * (duration_s / SAMPLE_SECONDS))
+        else:
+            counts[idx] = round(ds_count)
+
+    return counts, is_estimated
 
 
 def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
@@ -141,13 +224,18 @@ def build_track_folder_name(pgs_index: int, track_info: dict) -> str:
 
 
 def extract_track_streaming(ffmpeg_path: str, input_path: str,
-                            stream_index: int, max_ds: int = None) -> list:
+                            stream_index: int, max_ds: int = None,
+                            seek_s: float = None,
+                            read_duration_s: float = None) -> list:
     """Extract a single PGS track via pipe, parsing incrementally.
 
     Terminates FFmpeg early once max_ds display sets are collected,
     so only the portion of the container up to the last needed subtitle
     is read from disk.  For a 50 GB movie where the first 10 subtitles
     appear in the first 5 minutes, this reads only ~5 minutes of data.
+
+    Optional seek_s / read_duration_s allow targeting a specific window
+    (e.g. the middle of the file for preview sampling).
 
     No temp files are created — everything flows through the pipe.
 
@@ -158,10 +246,14 @@ def extract_track_streaming(ffmpeg_path: str, input_path: str,
 
     Returns a list of display sets.
     """
-    cmd = [ffmpeg_path, "-v", "error",
-           "-i", input_path,
-           "-map", f"0:{stream_index}",
-           "-c", "copy", "-f", "sup", "pipe:1"]
+    cmd = [ffmpeg_path, "-v", "error"]
+    if seek_s is not None and seek_s > 0:
+        cmd += ["-ss", str(seek_s)]
+    if read_duration_s is not None and read_duration_s > 0:
+        cmd += ["-t", str(read_duration_s)]
+    cmd += ["-i", input_path,
+            "-map", f"0:{stream_index}",
+            "-c", "copy", "-f", "sup", "pipe:1"]
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL)
