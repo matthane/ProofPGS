@@ -4,7 +4,7 @@ import os
 import struct
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from .constants import SEG_PCS, SEG_PDS, SEG_ODS
 from .parser import parse_pcs, parse_pds, parse_ods, decode_rle, pts_to_ms
@@ -112,9 +112,58 @@ def crop_to_content(img: Image.Image, pad: int = 8) -> Image.Image:
     ))
 
 
+def _render_check_icon(r, color):
+    """Render a smooth check-circle icon via 4x oversampling.
+
+    Reproduces the Phosphor 'check-circle' regular icon: an outlined
+    ring with a proportional checkmark, drawn at 4x resolution and
+    downsampled with LANCZOS for clean antialiasing.
+    """
+    scale = 4
+    sz = (2 * r + 1) * scale
+    img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    c = sz // 2
+    sr = r * scale
+    lw = max(sr // 7, 2)
+    d.ellipse([(c - sr, c - sr), (c + sr, c + sr)],
+              outline=color, width=lw)
+    # Checkmark proportions from the Phosphor SVG path (256-unit viewBox,
+    # vertices at roughly (-46,+2), (-16,+32), (+45,-30) relative to
+    # centre, normalised to the scaled radius).
+    d.line([
+        (c - int(sr * 0.35), c + int(sr * 0.05)),
+        (c - int(sr * 0.10), c + int(sr * 0.30)),
+        (c + int(sr * 0.40), c - int(sr * 0.30)),
+    ], fill=color, width=lw)
+    return img.resize((2 * r + 1, 2 * r + 1), Image.LANCZOS)
+
+
+def _render_x_icon(r, color):
+    """Render a smooth x-circle icon via 4x oversampling.
+
+    Reproduces the Phosphor 'x-circle' regular icon: an outlined ring
+    with a proportional X, drawn at 4x resolution and downsampled with
+    LANCZOS for clean antialiasing.
+    """
+    scale = 4
+    sz = (2 * r + 1) * scale
+    img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    c = sz // 2
+    sr = r * scale
+    lw = max(sr // 7, 2)
+    d.ellipse([(c - sr, c - sr), (c + sr, c + sr)],
+              outline=color, width=lw)
+    dd = int(sr * 0.35)
+    d.line([(c - dd, c - dd), (c + dd, c + dd)], fill=color, width=lw)
+    d.line([(c - dd, c + dd), (c + dd, c - dd)], fill=color, width=lw)
+    return img.resize((2 * r + 1, 2 * r + 1), Image.LANCZOS)
+
+
 def process_display_sets(display_sets: list, out_dir: str, mode: str,
                          tonemap: str, nocrop: bool,
-                         limit: int = None) -> int:
+                         limit: int = None, detection: dict = None) -> int:
     """Render display sets and save PNGs to out_dir.
 
     Args:
@@ -126,6 +175,35 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
     """
     os.makedirs(out_dir, exist_ok=True)
     saved = 0
+
+    # Pre-compute compare mode resources (font, detection, icons)
+    if mode == "compare":
+        try:
+            label_font = ImageFont.truetype("arial.ttf", 14)
+        except (IOError, OSError):
+            label_font = ImageFont.load_default()
+
+        detected_side = None
+        if detection and detection.get("verdict"):
+            detected_side = detection["verdict"]
+
+        icon_r = 8
+        green = (100, 200, 100, 255)
+        red   = (200, 100, 100, 255)
+
+        # Minimum panel width so labels always fit, even on short subtitles
+        _sdr_w = label_font.getlength("BT.709 (SDR decode)")
+        _hdr_w = label_font.getlength(f"BT.2020+PQ -> BT.709 ({tonemap})")
+        if detected_side:
+            check_icon = _render_check_icon(icon_r, green)
+            x_icon     = _render_x_icon(icon_r, red)
+            icon_w = 2 * icon_r + 1
+            gap = 12
+            _ind_w = gap + icon_w + 6 + int(
+                label_font.getlength("Not mastered for HDR"))
+            min_panel_w = int(max(_sdr_w, _hdr_w) + _ind_w) + 8
+        else:
+            min_panel_w = int(max(_sdr_w, _hdr_w)) + 8
 
     for i, ds in enumerate(display_sets):
 
@@ -155,15 +233,55 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
 
             ref = img_hdr or img_sdr
             w, h = ref.width, ref.height
-            label_h = 22
-            combined = Image.new("RGBA", (w * 2 + 10, h + label_h), (20, 20, 20, 255))
+            w = max(w, min_panel_w)
+
+            pad = 10       # outer padding around entire composition
+            label_h = 34
+            gutter = pad * 2  # gap between the two panels
+            combined = Image.new("RGBA",
+                                 (pad * 2 + w * 2 + gutter, pad * 2 + label_h + h),
+                                 (20, 20, 20, 255))
             draw = ImageDraw.Draw(combined)
-            draw.text((4, 4),        "BT.709 (SDR decode)",              fill=(180, 180, 180, 255))
-            draw.text((w + 14, 4),   f"BT.2020+PQ -> BT.709 ({tonemap})", fill=(180, 180, 180, 255))
+
+            # Panel origins (top-left of each panel's label area)
+            sdr_x = pad
+            hdr_x = pad + w + gutter
+
+            sdr_label = "BT.709 (SDR decode)"
+            hdr_label = f"BT.2020+PQ -> BT.709 ({tonemap})"
+            text_y = pad + 6
+            draw.text((sdr_x + 4, text_y), sdr_label, fill=(180, 180, 180, 255), font=label_font)
+            draw.text((hdr_x + 4, text_y), hdr_label, fill=(180, 180, 180, 255), font=label_font)
+
+            # Inline mastered-for indicators after each label
+            if detected_side:
+                # SDR side
+                sdr_icon_x = sdr_x + 4 + int(draw.textlength(sdr_label, font=label_font)) + gap
+                if detected_side == "sdr":
+                    combined.paste(check_icon, (sdr_icon_x, text_y), mask=check_icon)
+                    draw.text((sdr_icon_x + icon_w + 6, text_y),
+                              "Mastered for SDR", fill=green, font=label_font)
+                else:
+                    combined.paste(x_icon, (sdr_icon_x, text_y), mask=x_icon)
+                    draw.text((sdr_icon_x + icon_w + 6, text_y),
+                              "Not mastered for SDR", fill=red, font=label_font)
+
+                # HDR side
+                hdr_icon_x = hdr_x + 4 + int(draw.textlength(hdr_label, font=label_font)) + gap
+                if detected_side == "hdr":
+                    combined.paste(check_icon, (hdr_icon_x, text_y), mask=check_icon)
+                    draw.text((hdr_icon_x + icon_w + 6, text_y),
+                              "Mastered for HDR", fill=green, font=label_font)
+                else:
+                    combined.paste(x_icon, (hdr_icon_x, text_y), mask=x_icon)
+                    draw.text((hdr_icon_x + icon_w + 6, text_y),
+                              "Not mastered for HDR", fill=red, font=label_font)
+
+            img_y = pad + label_h
             if img_sdr:
-                combined.paste(img_sdr, (0,      label_h), mask=img_sdr)
+                combined.paste(img_sdr, (sdr_x, img_y), mask=img_sdr)
             if img_hdr:
-                combined.paste(img_hdr, (w + 10, label_h), mask=img_hdr)
+                combined.paste(img_hdr, (hdr_x, img_y), mask=img_hdr)
 
             fname = f"ds_{i:04d}_{pts_ms:.0f}ms_compare.png"
             combined.convert("RGB").save(os.path.join(out_dir, fname))
