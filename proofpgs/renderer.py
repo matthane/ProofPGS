@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
 
+from . import __version__
 from .constants import SEG_PCS, SEG_PDS, SEG_ODS
 from .parser import parse_pcs, parse_pds, parse_ods, decode_rle, pts_to_ms
 from .color import decode_palette_hdr, decode_palette_sdr
@@ -205,6 +206,17 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
         else:
             min_panel_w = int(max(_sdr_w, _hdr_w)) + 8
 
+        # Footer resources
+        footer_font = ImageFont.truetype(
+            str(_ASSETS / "Inter_18pt-Medium.ttf"), 16)
+        logo_raw = Image.open(_ASSETS / "proofpgs-icon-footer.png").convert("RGBA")
+        logo_h = 24
+        logo_w = int(logo_raw.width * logo_h / logo_raw.height)
+        logo = logo_raw.resize((logo_w, logo_h), Image.LANCZOS)
+        footer_text = f"PROOFPGS V{__version__}"
+        footer_color = (100, 100, 100, 255)
+        footer_h = 42
+
     for i, ds in enumerate(display_sets):
 
         if mode == "compare":
@@ -237,9 +249,11 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
 
             pad = 10       # outer padding around entire composition
             label_h = 34
-            gutter = pad * 2  # gap between the two panels
+            gutter = pad * 4  # gap between the two panels
+            total_w = pad * 2 + w * 2 + gutter
+            footer_margin = pad * 2
             combined = Image.new("RGBA",
-                                 (pad * 2 + w * 2 + gutter, pad * 2 + label_h + h),
+                                 (total_w, pad * 2 + label_h + h + footer_margin + footer_h),
                                  (20, 20, 20, 255))
             draw = ImageDraw.Draw(combined)
 
@@ -282,6 +296,21 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
                 combined.paste(img_sdr, (sdr_x, img_y), mask=img_sdr)
             if img_hdr:
                 combined.paste(img_hdr, (hdr_x, img_y), mask=img_hdr)
+
+            # Divider line between the two panels
+            div_x = pad + w + gutter // 2
+            draw.line([(div_x, img_y), (div_x, img_y + h)],
+                      fill=(60, 60, 60, 255), width=1)
+
+            # Footer: centred logo + app name/version
+            footer_top = pad + label_h + h + footer_margin + (footer_h - logo_h) // 2
+            text_w = int(draw.textlength(footer_text, font=footer_font))
+            content_gap = 6
+            content_w = logo_w + content_gap + text_w
+            cx = (total_w - content_w) // 2
+            combined.paste(logo, (cx, footer_top), mask=logo)
+            draw.text((cx + logo_w + content_gap, footer_top + 1),
+                      footer_text, fill=footer_color, font=footer_font)
 
             fname = f"ds_{i:04d}_{pts_ms:.0f}ms_compare.png"
             combined.convert("RGB").save(os.path.join(out_dir, fname))
