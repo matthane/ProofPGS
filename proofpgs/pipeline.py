@@ -42,6 +42,9 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     det_str = format_detection(detection)
     print(f"  Detected: {det_str}")
 
+    if mode == "validate":
+        return 0
+
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
         print(f"  Mode: {mode.upper()} (auto-detected)  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
@@ -212,6 +215,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print("  spread across the movie. Extracting them requires reading")
         print("  much further into the file and will be significantly slower.")
     print()
+
+    if mode == "validate":
+        return
 
     # --- Track selection ---
     if tracks_arg is not None:

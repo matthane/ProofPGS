@@ -30,6 +30,7 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `renderer.py` | Converts display sets to PNG files |
 | `ffmpeg.py` | ffprobe track discovery, streaming and batch extraction |
 | `interactive.py` | Interactive track/count prompts |
+| `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
 | `constants.py` | PQ constants, segment type codes, file extensions |
 
 ## Key technical decisions
@@ -68,6 +69,9 @@ The interactive default of 10 subtitles extracts from the **middle** of the file
 **Primary signal: PQ plausibility test.** Each bright palette entry (Y > 50) is decoded YCbCr → R'G'B' using the BT.2020 matrix. The **95th percentile** of unique PQ channel values is used as the representative metric — this requires at least 5% of distinct palette entries to exceed the threshold before triggering the SDR signal, making it robust against outlier glow/gradient/saturated entries that can appear in HDR content (e.g., animated title sequences with complex graphics). If this representative value exceeds the PQ code value for 1000 nits (~0.75), the PQ interpretation implies unrealistic luminance for the bulk of entries, meaning the content is gamma-encoded SDR. If it stays below 0.65 (~400 nits), the PQ interpretation is plausible and the content is HDR. This test is particularly effective for colored text (gold, yellow, cyan) where Y-only thresholds are ambiguous — e.g., SDR gold text at Y=178 gives R'≈0.92 under BT.2020, corresponding to ~4800 nits in PQ (obviously SDR), while genuine HDR text at 203 nits gives R'≈0.58 (~200 nits).
 
 **Secondary signals:** Y-value thresholds (≥210 SDR, ≤170 HDR) and achromatic entry analysis (Cb/Cr near 128) handle cases where the PQ test is inconclusive.
+
+### Windows Explorer context menu
+`--install` registers a cascading context menu under `HKCU\Software\Classes` (no admin required). A shared submenu at `ProofPGS.SubMenu` defines the mode entries; per-extension verbs under `SystemFileAssociations\<ext>\shell\ProofPGS` reference it via `ExtendedSubCommandsKey`. `SystemFileAssociations` is used instead of direct `.ext\shell` so the menu appears regardless of which program owns the file type. The commands embed both the Python interpreter path and the project root directory (via `cd /d`) captured at install time, since the module is not pip-installed. Running `--install` again is idempotent and updates the paths.
 
 ### Windows pipe deadlock workaround
 `extract_track_streaming()` sends FFmpeg's stderr to `/dev/null` (on Windows, `subprocess.DEVNULL`). If stderr is inherited and FFmpeg writes enough warnings to fill the 4 KB pipe buffer, it blocks — which stalls stdout while we're blocked reading stdout. Do not remove this.

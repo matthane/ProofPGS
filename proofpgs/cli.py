@@ -22,13 +22,20 @@ def _main():
                     "containers (MKV, M2TS, etc.).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("input_file",
+    parser.add_argument("input_file", nargs="?", default=None,
                         help="Path to a .sup file or video container "
                              "(MKV, M2TS, TS, MP4, etc.)")
-    parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr"], default="auto",
+    parser.add_argument("--install", action="store_true",
+                        help="Register Windows Explorer context menu entries "
+                             "for all supported file types")
+    parser.add_argument("--uninstall", action="store_true",
+                        help="Remove Windows Explorer context menu entries")
+    parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr", "validate"],
+                        default="auto",
                         help="Output mode. auto=detect color space (default), "
                              "compare=SDR & HDR side-by-side, "
-                             "hdr=BT.2020+PQ (UHD BD), sdr=BT.709 (BD)")
+                             "hdr=BT.2020+PQ (UHD BD), sdr=BT.709 (BD), "
+                             "validate=show track info & detection only (no output)")
     parser.add_argument("--tonemap", choices=["clip", "reinhard"], default="clip",
                         help="HDR->SDR tonemapping. clip=hard clip at 203 nits ref white "
                              "(best for subtitles), reinhard=soft roll-off. Default: clip")
@@ -44,6 +51,20 @@ def _main():
                         help="Output full video-frame sized PNGs instead of cropping to content")
     args = parser.parse_args()
 
+    if args.install:
+        from .shellmenu import install
+        install()
+        return
+
+    if args.uninstall:
+        from .shellmenu import uninstall
+        uninstall()
+        return
+
+    if args.input_file is None:
+        parser.print_help()
+        sys.exit(1)
+
     if not os.path.isfile(args.input_file):
         print(f"[error] File not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
@@ -58,7 +79,8 @@ def _main():
         print(f"Reading: {args.input_file}")
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop)
-        print(f"\nDone. {saved} images written to {args.out}/")
+        if args.mode != "validate":
+            print(f"\nDone. {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,

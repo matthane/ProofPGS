@@ -56,12 +56,13 @@ python -m proofpgs movie.mkv --out ./my_output
 
 ### Output modes
 
-ProofPGS has four output modes:
+ProofPGS has five output modes:
 
 - **`auto`** (default) — Automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes with the correct pipeline. Falls back to `compare` if detection is inconclusive or tracks have mixed color spaces.
 - **`compare`** — For delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
 - **`hdr`** — Direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
 - **`sdr`** — Direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
+- **`validate`** — Displays track information and SDR/HDR detection results without producing any output. Useful for quickly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, or for integration with external scripts.
 
 ```bash
 # Auto-detect color space and decode accordingly (default):
@@ -75,18 +76,39 @@ python -m proofpgs input.sup --mode hdr
 
 # Direct export — transparent SDR-decoded PNGs:
 python -m proofpgs input.sup --mode sdr
+
+# Show track info and detection only (no output):
+python -m proofpgs movie.mkv --mode validate
 ```
 
 ## Options
 
 | Option | Values | Default | Description |
 |---|---|---|---|
-| `--mode` | `auto`, `compare`, `hdr`, `sdr` | `auto` | `auto` detects color space per-track and decodes accordingly. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. |
+| `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate` | `auto` | `auto` detects color space per-track and decodes accordingly. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). |
 | `--tonemap` | `clip`, `reinhard` | `clip` | HDR-to-SDR tonemapping strategy. `clip` hard-clips at 203 nits reference white (best for subtitles). `reinhard` applies a soft roll-off. |
 | `--out` | path | `pgs_output/` next to input file | Output directory. |
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
 | `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
+| `--install` | flag | — | Register Windows Explorer context menu entries for all supported file types. |
+| `--uninstall` | flag | — | Remove Windows Explorer context menu entries. |
+
+## Windows Explorer Integration
+
+ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.m2ts`, `.ts`, `.mp4`, `.m4v`, `.avi`, `.wmv`). The menu shows a **ProofPGS** submenu with entries for each output mode.
+
+```bash
+# Register context menu entries:
+python -m proofpgs --install
+
+# Remove context menu entries:
+python -m proofpgs --uninstall
+```
+
+The install command records the paths to both the Python interpreter and the project directory at install time. If you move the project or switch Python environments, run `--install` again to update the paths.
+
+On Windows 11, right-click a supported file and choose **Show more options** to see the ProofPGS submenu.
 
 ## Output
 
@@ -147,4 +169,5 @@ proofpgs/
   ffmpeg.py         # FFmpeg/ffprobe integration
   interactive.py    # Interactive track and count selection
   pipeline.py       # High-level orchestration
+  shellmenu.py      # Windows Explorer context menu integration
 ```
