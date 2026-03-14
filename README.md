@@ -1,3 +1,5 @@
+<img src="proofpgs/assets/proofpgs-icon-light.png" width="64" height="64" alt="ProofPGS icon">
+
 # ProofPGS
 
 A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles. Validates PGS tracks with per-track SDR/HDR detection and subtitle count estimation, and can export each subtitle as a PNG using the correct colour pipeline — **HDR** (UHD Blu-ray, BT.2020 + PQ) or **SDR** (standard Blu-ray, BT.709).
