@@ -1,6 +1,7 @@
 """Windows Explorer context menu integration for ProofPGS."""
 
 import sys
+from pathlib import Path
 
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
 
@@ -27,6 +28,23 @@ def _project_root() -> str:
     """Return the project root directory (parent of the proofpgs package)."""
     import os
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _icon_path() -> str:
+    """Return the icon path matching the current Windows theme."""
+    import winreg
+    variant = "light"  # light icon for dark backgrounds (default)
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            if val == 1:
+                variant = "dark"  # dark icon for light backgrounds
+    except OSError:
+        pass
+    return str(Path(__file__).resolve().parent / "assets" / f"proofpgs-icon-{variant}.ico")
 
 
 def _build_command(python_exe: str, project_dir: str,
@@ -123,11 +141,13 @@ def install():
             winreg.SetValue(key, "", winreg.REG_SZ, command)
 
     # --- Register per-extension shell verb ---
+    icon = _icon_path()
     for ext in extensions:
         verb_path = (f"Software\\Classes\\SystemFileAssociations"
                      f"\\{ext}\\shell\\{_MENU_NAME}")
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, verb_path) as key:
             winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, _MENU_NAME)
+            winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
             winreg.SetValueEx(key, "ExtendedSubCommandsKey", 0,
                               winreg.REG_SZ, _SUBMENU_KEY)
 
