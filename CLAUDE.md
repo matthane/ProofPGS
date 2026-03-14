@@ -31,7 +31,7 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `ffmpeg.py` | ffprobe track discovery, streaming and batch extraction |
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
-| `constants.py` | PQ constants, segment type codes, file extensions |
+| `constants.py` | PQ constants, segment type codes, file extensions, analysis budget (`Budget` class) |
 
 ## Key technical decisions
 
@@ -48,13 +48,18 @@ Blu-ray SDR content is mastered for BT.1886 (gamma 2.4). PC monitors use sRGB (�
 ### HDR tonemap reference white is 203 nits
 The UHD BD reference white is 203 nits. Linear light is normalised by dividing by `203/10000 = 0.0203` before clipping or Reinhard tonemapping. This maps reference-white subtitles to sRGB 1.0.
 
+### Track analysis budget (10s wallclock)
+When listing PGS tracks in a container, the analysis phase (subtitle count estimation + SDR/HDR detection) runs under a **10-second wallclock budget**. A single FFmpeg pass extracts samples from all tracks simultaneously (mid-file seek, `-frames:s` packet cap per track, `-flush_packets 1`). A watchdog thread kills FFmpeg when the budget expires. Tracks that received enough data are fully analyzed; tracks with too few display sets (sparse subtitles) are marked `analysis_bailed = True` and shown as `[not analyzed — sparse subtitles]` in the listing. The user can press `[v]` to re-analyze bailed tracks without a time limit. `--mode validate` also runs without a budget and shows scan progress.
+
+The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track packet cap is `ANALYSIS_MAX_PACKETS` (default 125, ~25 display sets at ~5 segments/DS).
+
 ### Preview samples from the middle of the file
-The interactive default of 10 subtitles extracts from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits. The same cached extraction is reused for the track listing's subtitle count.
+Both the analysis extraction and the interactive preview (default 10 subtitles) extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits.
 
 ### Subtitle counts: exact vs estimated
 - **MKV**: `NUMBER_OF_FRAMES` tag provides an exact display-set count for free.
 - **MP4 / other**: `nb_frames` stream field used if available.
-- **Remaining**: a 2-minute mid-file streaming window is extracted; content display sets are counted and extrapolated to the full duration. Shown as `(~N subtitles est.)`.
+- **Remaining**: estimated from the analysis extraction's PTS range — the time span between first and last gathered display set is extrapolated to the full container duration. Shown as `(~N subtitles est.)`.
 
 ### Two extraction strategies
 

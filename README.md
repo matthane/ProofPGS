@@ -29,7 +29,7 @@ That's it. ProofPGS will:
 
 1. Detect all PGS subtitle tracks in the file
 2. Auto-detect whether each track is SDR or HDR (per-track color space detection)
-3. Prompt you to pick which tracks to process
+3. Prompt you to pick which tracks to process (with an option to validate sparse tracks)
 4. Prompt you for how many subtitles to decode (defaults to 10 for a fast preview)
 5. Decode using the correct color pipeline and save PNGs to a `pgs_output/` folder next to the input file
 
@@ -62,7 +62,7 @@ ProofPGS has five output modes:
 - **`compare`** — For delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
 - **`hdr`** — Direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
 - **`sdr`** — Direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
-- **`validate`** — Displays track information and SDR/HDR detection results without producing any output. Useful for quickly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, or for integration with external scripts.
+- **`validate`** — Analyzes all tracks without a time limit (with scan progress) and displays track information and SDR/HDR detection results without producing any output. Useful for thoroughly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, including sparse tracks that may be skipped during normal interactive analysis.
 
 ```bash
 # Auto-detect color space and decode accordingly (default):
@@ -148,11 +148,11 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ## Performance
 
-When processing containers with a display-set limit (`--first` or the interactive default of 10), ProofPGS uses **streaming extraction**: FFmpeg pipes each track directly to the parser and is terminated as soon as enough subtitles are collected. No temp files are created in this mode.
+**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks in a single FFmpeg pass under a 10-second wallclock budget. It seeks to the middle of the file for representative content and extracts samples from all tracks simultaneously. Tracks that receive enough data get a subtitle count estimate and SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit.
 
-For the interactive default of 10, ProofPGS samples from the **middle of the file** rather than the start, giving more representative subtitles from actual movie content instead of intros or credits. For MKV containers this also provides an accurate subtitle count for the track listing; for other containers (M2TS, TS, etc.) an estimated count is derived from the same window and shown as `(~N subtitles est.)`.
+**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), FFmpeg pipes each track directly to the parser and is terminated as soon as enough subtitles are collected. No temp files are created. The default of 10 samples from the **middle of the file** for representative content.
 
-When processing all subtitles, a single FFmpeg pass extracts all selected tracks to temporary files, then each is decoded in turn.
+**Batch extraction:** When processing all subtitles, a single FFmpeg pass extracts all selected tracks to temporary files, then each is decoded in turn.
 
 ## Project Structure
 
