@@ -3,11 +3,18 @@
 import sys
 
 
-def select_tracks_interactive(tracks: list) -> list:
-    """Prompt the user to select which PGS tracks to process."""
+def select_tracks_interactive(tracks: list,
+                              has_bailed: bool = False) -> list | str:
+    """Prompt the user to select which PGS tracks to process.
+
+    Returns a list of track indices, or the string ``"validate"`` when
+    the user chooses to re-analyze bailed tracks.
+    """
     print("Which tracks do you want to process?")
     print("  [Enter]    All tracks")
     print("  [numbers]  Specific tracks, e.g. 0,2,3")
+    if has_bailed:
+        print("  [v]        Validate unanalyzed tracks first (may take longer)")
     try:
         choice = input("> ").strip()
     except EOFError:
@@ -19,6 +26,9 @@ def select_tracks_interactive(tracks: list) -> list:
 
     if not choice:
         return list(range(len(tracks)))
+
+    if has_bailed and choice.lower() == "v":
+        return "validate"
 
     try:
         indices = [int(x.strip()) for x in choice.split(",")]

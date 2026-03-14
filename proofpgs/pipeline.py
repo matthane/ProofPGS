@@ -10,17 +10,15 @@ from .parser import read_sup, ds_has_content
 from .renderer import process_display_sets
 from .detect import detect_from_palettes, format_detection
 from .ffmpeg import (
-    check_ffmpeg, probe_pgs_tracks, SAMPLE_SECONDS,
+    check_ffmpeg, probe_pgs_tracks,
     extract_all_pgs_tracks, build_track_folder_name,
-    extract_track_streaming,
+    extract_track_streaming, extract_analysis_samples,
 )
 from .interactive import select_tracks_interactive, select_count_interactive
+from .constants import Budget, LISTING_BUDGET_S
 
-# Seconds of mid-file data to extract per track for color space detection
-# when no preview cache exists (e.g. MKV with known frame counts).
-# Must be long enough to reliably capture at least a few subtitle display
-# sets — 30s was too short for films with sparse subtitles.
-_DETECT_SECONDS = 120
+# Tracks with fewer display sets per minute than this are flagged sparse.
+_SPARSE_DS_PER_MIN = 1.0
 
 
 def _resolve_auto_mode(detection: dict) -> str:
@@ -29,6 +27,206 @@ def _resolve_auto_mode(detection: dict) -> str:
         return detection["verdict"]
     return "compare"
 
+
+# ---------------------------------------------------------------------------
+# Analysis helpers
+# ---------------------------------------------------------------------------
+
+def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
+                    duration_s, preview_cache, budget=None):
+    """Single-pass analysis: extract samples for all requested tracks at
+    once, then run detection and count estimation on each.
+
+    Updates each track dict in-place with:
+      detection, num_frames (if not set), estimated, sparse, analysis_bailed
+    Caches extracted display sets in *preview_cache*.
+    """
+    if not track_indices:
+        return
+
+    # Determine seek position — mid-file for long files, none for short.
+    has_duration = duration_s is not None and duration_s > 0
+    is_short = not has_duration or duration_s <= 120
+    seek_s = None if is_short else max(0, (duration_s / 2) - 60)
+
+    extract_tracks = [tracks[ti] for ti in track_indices]
+
+    label = "Validating" if budget is None else "Analyzing"
+    print(f"  {label} {len(extract_tracks)} PGS track(s)...")
+
+    # --- Single FFmpeg pass for all tracks ---
+    temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
+    try:
+        sup_paths = extract_analysis_samples(
+            ffmpeg_path, input_path, extract_tracks, temp_dir,
+            seek_s=seek_s,
+            deadline=budget.deadline() if budget else None,
+            duration_s=duration_s if budget is None else None,
+        )
+
+        for list_i, ti in enumerate(track_indices):
+            t = tracks[ti]
+            sup_path = sup_paths[list_i]
+
+            if os.path.isfile(sup_path) and os.path.getsize(sup_path) > 0:
+                ds = read_sup(sup_path)
+            else:
+                ds = []
+
+            preview_cache[ti] = ds
+            content_count = sum(1 for d in ds if ds_has_content(d))
+
+            # --- Subtitle count estimation ---
+            if t["num_frames"] is None:
+                if content_count > 0 and not is_short and has_duration:
+                    # Extrapolate from PTS span of the gathered data.
+                    first_pts = ds[0][0]["pts"] / 90_000.0
+                    last_pts = ds[-1][0]["pts"] / 90_000.0
+                    pts_span = last_pts - first_pts
+                    if pts_span > 0:
+                        t["num_frames"] = round(
+                            content_count * (duration_s / pts_span)
+                        )
+                    else:
+                        # All DS at same PTS — use raw count.
+                        t["num_frames"] = content_count
+                    t["estimated"] = True
+                elif content_count > 0:
+                    t["num_frames"] = content_count
+                    t["estimated"] = False
+
+            # --- Color space detection ---
+            if ds:
+                t["detection"] = detect_from_palettes(ds)
+            else:
+                t["detection"] = {
+                    "verdict": None, "confidence": "low",
+                    "max_y": 0, "max_achromatic_y": None,
+                    "max_pq_channel": 0, "num_palettes": 0,
+                }
+
+            # --- Sparsity ---
+            nf = t["num_frames"]
+            if nf is not None and has_duration:
+                t["sparse"] = nf / (duration_s / 60.0) < _SPARSE_DS_PER_MIN
+            elif t["forced"]:
+                t["sparse"] = True
+            else:
+                t["sparse"] = False
+
+            # --- Bail-out ---
+            t["analysis_bailed"] = (
+                content_count == 0 and t["detection"]["verdict"] is None
+            )
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # --- Retry inconclusive detections from start of file ---
+    if seek_s is not None:
+        can_retry = budget is None or not budget.exhausted()
+        retry_indices = [
+            ti for ti in track_indices
+            if tracks[ti]["detection"]["verdict"] is None and can_retry
+        ]
+        if retry_indices:
+            retry_tracks = [tracks[ti] for ti in retry_indices]
+            temp_dir2 = tempfile.mkdtemp(prefix="pgs_retry_")
+            try:
+                sup_paths2 = extract_analysis_samples(
+                    ffmpeg_path, input_path, retry_tracks, temp_dir2,
+                    seek_s=None,  # from start of file
+                    deadline=budget.deadline() if budget else None,
+                    duration_s=duration_s if budget is None else None,
+                )
+                for list_i, ti in enumerate(retry_indices):
+                    t = tracks[ti]
+                    sup_path = sup_paths2[list_i]
+                    if (os.path.isfile(sup_path)
+                            and os.path.getsize(sup_path) > 0):
+                        ds = read_sup(sup_path)
+                        fallback = detect_from_palettes(ds)
+                        if fallback["verdict"] is not None:
+                            t["detection"] = fallback
+                        # Update cache / counts if we now have data
+                        # for a previously-bailed track.
+                        content_count = sum(
+                            1 for d in ds if ds_has_content(d)
+                        )
+                        if content_count > 0:
+                            preview_cache[ti] = ds
+                            if t["num_frames"] is None:
+                                t["num_frames"] = content_count
+                                t["estimated"] = True
+                            t["analysis_bailed"] = False
+            finally:
+                shutil.rmtree(temp_dir2, ignore_errors=True)
+
+
+def _print_track_listing(tracks):
+    """Print the track listing with analysis results.
+
+    Returns True if any tracks were bailed (not analyzed).
+    """
+    has_sparse = False
+    has_bailed = False
+
+    print(f"Found {len(tracks)} PGS subtitle track(s):")
+    for ti, t in enumerate(tracks):
+        flags = []
+        if t["forced"]:  flags.append("forced")
+        if t["default"]: flags.append("default")
+        flag_str = f"  [{', '.join(flags)}]" if flags else ""
+        title_str = f'  "{t["title"]}"' if t["title"] else ""
+
+        if t.get("analysis_bailed"):
+            has_bailed = True
+            extra = "  [not analyzed — sparse subtitles]"
+            print(f"  [{ti}] stream {t['index']}: "
+                  f"{t['language']}{title_str}{flag_str}{extra}")
+            continue
+
+        # Subtitle count
+        if t["num_frames"] is not None:
+            if t.get("estimated"):
+                count_str = f"  (~{t['num_frames']} subtitles est.)"
+            else:
+                count_str = f"  (~{t['num_frames']} subtitles)"
+        else:
+            count_str = ""
+
+        # Detection
+        det = t.get("detection", {})
+        if det.get("verdict"):
+            pq = det.get("max_pq_channel", 0)
+            det_str = (f"  [{det['verdict'].upper()}, "
+                       f"PQ-max: {pq:.3f}]")
+        else:
+            det_str = ""
+
+        # Sparse warning
+        slow_warn = ""
+        if t.get("sparse"):
+            slow_warn = "  ** sparse — may be slow"
+            has_sparse = True
+
+        print(f"  [{ti}] stream {t['index']}: "
+              f"{t['language']}{title_str}{flag_str}{count_str}"
+              f"{det_str}{slow_warn}")
+
+    if has_sparse:
+        print()
+        print("  Note: Tracks marked 'sparse' contain very few subtitles")
+        print("  spread across the movie. Extracting them requires reading")
+        print("  much further into the file and will be significantly slower.")
+    print()
+
+    return has_bailed
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
 
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      tonemap: str, first, nocrop: bool) -> int:
@@ -82,144 +280,25 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print("No PGS subtitle tracks found.")
         return
 
-    # For tracks missing element counts (non-MKV containers), extract
-    # from a 2-minute window in the middle of the file.  The -t flag
-    # limits FFmpeg's read to that window — no max_ds cap — so we get
-    # every display set within the window for an accurate density
-    # estimate.  The extracted data is cached and reused for rendering
-    # when the requested max_ds fits within what we already have.
+    # === Phase 2: Single-pass analysis (target: <10s wallclock) ===
     preview_cache = {}  # ti -> list of display sets
+    all_indices = list(range(len(tracks)))
 
-    needs_count = [ti for ti, t in enumerate(tracks) if t["num_frames"] is None]
-    if needs_count and duration_s and duration_s > 0:
-        midpoint = max(0, (duration_s - SAMPLE_SECONDS) / 2)
-        # For short files the window covers the whole duration.
-        window = min(SAMPLE_SECONDS, duration_s)
-        is_estimated = window < duration_s
+    if mode == "validate":
+        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
+                        duration_s, preview_cache, budget=None)
+    else:
+        budget = Budget(LISTING_BUDGET_S)
+        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
+                        duration_s, preview_cache, budget=budget)
 
-        for ti in needs_count:
-            t = tracks[ti]
-            try:
-                ds = extract_track_streaming(
-                    ffmpeg_path, input_path, t["index"],
-                    # No max_ds cap — the -t duration flag limits the
-                    # read window.  We want ALL display sets within the
-                    # window for an accurate count / density estimate.
-                    seek_s=midpoint if is_estimated else None,
-                    read_duration_s=window if is_estimated else None,
-                )
-            except Exception:
-                ds = []
-
-            preview_cache[ti] = ds
-            content_count = sum(1 for d in ds if ds_has_content(d))
-
-            if is_estimated:
-                # Extrapolate from the sample window to the full duration.
-                t["num_frames"] = round(
-                    content_count * (duration_s / window)
-                )
-            else:
-                # Short file, read the whole thing — count is exact.
-                t["num_frames"] = content_count
-            t["estimated"] = is_estimated
-
-    # Determine which tracks are sparse.  num_frames is in display-set
-    # units (MKV's NUMBER_OF_FRAMES already counts at that level; for
-    # other containers the pre-extraction above counts content display
-    # sets directly).  We treat anything under 1 display set per minute
-    # as "sparse".
-    SPARSE_DS_PER_MIN = 1.0   # threshold: fewer -> sparse warning
-
-    has_sparse = False
-    sparse_set = set()
-
-    for ti, t in enumerate(tracks):
-        nf = t["num_frames"]
-        if nf is not None and duration_s and duration_s > 0:
-            ds_per_min = nf / (duration_s / 60.0)
-            if ds_per_min < SPARSE_DS_PER_MIN:
-                sparse_set.add(ti)
-                has_sparse = True
-        elif t["forced"]:
-            # No frame count available — fall back to forced flag
-            sparse_set.add(ti)
-            has_sparse = True
-
-    # --- Per-track color space detection ---
-    # Use preview_cache data where available; for tracks without cached
-    # data (e.g. MKV with NUMBER_OF_FRAMES), extract a short sample.
-    detect_midpoint = None
-    if duration_s and duration_s > 0:
-        detect_midpoint = max(0, (duration_s - _DETECT_SECONDS) / 2)
-
-    for ti, t in enumerate(tracks):
-        if ti in preview_cache and preview_cache[ti]:
-            t["detection"] = detect_from_palettes(preview_cache[ti])
-        else:
-            # Extract a sample from mid-file for detection.
-            try:
-                sample_ds = extract_track_streaming(
-                    ffmpeg_path, input_path, t["index"],
-                    seek_s=detect_midpoint,
-                    read_duration_s=_DETECT_SECONDS,
-                )
-            except Exception:
-                sample_ds = []
-            detection = detect_from_palettes(sample_ds)
-            # If mid-file yielded no verdict (e.g. landed in a subtitle
-            # gap), retry from the beginning of the file.
-            if detection["verdict"] is None and detect_midpoint:
-                try:
-                    sample_ds = extract_track_streaming(
-                        ffmpeg_path, input_path, t["index"],
-                        read_duration_s=_DETECT_SECONDS,
-                    )
-                except Exception:
-                    sample_ds = []
-                fallback = detect_from_palettes(sample_ds)
-                if fallback["verdict"] is not None:
-                    detection = fallback
-            t["detection"] = detection
-
-    print(f"Found {len(tracks)} PGS subtitle track(s):")
-    for ti, t in enumerate(tracks):
-        flags = []
-        if t["forced"]:  flags.append("forced")
-        if t["default"]: flags.append("default")
-        flag_str = f"  [{', '.join(flags)}]" if flags else ""
-        title_str = f'  "{t["title"]}"' if t["title"] else ""
-        # num_frames is normalised to display-set units.
-        if t["num_frames"] is not None:
-            if t.get("estimated"):
-                count_str = f"  (~{t['num_frames']} subtitles est.)"
-            else:
-                count_str = f"  (~{t['num_frames']} subtitles)"
-        else:
-            count_str = ""
-        slow_warn = "  ** sparse — may be slow" if ti in sparse_set else ""
-        det = t.get("detection", {})
-        if det.get("verdict"):
-            pq = det.get("max_pq_channel", 0)
-            det_str = (f"  [{det['verdict'].upper()}, "
-                       f"PQ-max: {pq:.3f}]")
-        else:
-            det_str = ""
-        print(f"  [{ti}] stream {t['index']}: "
-              f"{t['language']}{title_str}{flag_str}{count_str}"
-              f"{det_str}{slow_warn}")
-
-    if has_sparse:
-        print()
-        print("  Note: Tracks marked 'sparse' contain very few subtitles")
-        print("  spread across the movie. Extracting them requires reading")
-        print("  much further into the file and will be significantly slower.")
-    print()
+    # === Phase 3: Display track listing ===
+    has_bailed = _print_track_listing(tracks)
 
     if mode == "validate":
         return
 
-    # --- Track selection ---
+    # === Phase 4: Track selection (with [v] validate for bailed tracks) ===
     if tracks_arg is not None:
         if tracks_arg.lower() == "all":
             selected_indices = list(range(len(tracks)))
@@ -233,7 +312,21 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 print("  No valid track numbers. Processing all tracks.")
                 selected_indices = list(range(len(tracks)))
     elif sys.stdin.isatty():
-        selected_indices = select_tracks_interactive(tracks)
+        while True:
+            any_bailed = any(t.get("analysis_bailed") for t in tracks)
+            selection = select_tracks_interactive(tracks, has_bailed=any_bailed)
+            if selection == "validate":
+                bailed_indices = [
+                    i for i, t in enumerate(tracks)
+                    if t.get("analysis_bailed")
+                ]
+                _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
+                                input_path, duration_s, preview_cache,
+                                budget=None)
+                has_bailed = _print_track_listing(tracks)
+                continue
+            selected_indices = selection
+            break
     else:
         selected_indices = list(range(len(tracks)))
 
@@ -281,15 +374,12 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print(f"Mode: {mode_note}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
     print()
 
+    # === Phase 5: Extraction & rendering ===
+
     total_saved = 0
 
     if max_ds is not None:
         # ---- Streaming path: pipe per track, stop early ----
-        # No temp files. FFmpeg only reads as far into the container
-        # as needed to reach the requested number of subtitles.
-        # Extracts from the middle of the file for a representative
-        # preview.  If a track was pre-extracted and the cache has
-        # enough display sets, skip the extraction entirely.
         mid_seek = None
         if duration_s and duration_s > 0:
             mid_seek = max(0, (duration_s / 2) - 60)
@@ -300,12 +390,12 @@ def process_container(input_path: str, out_dir: str, mode: str,
             track_out = os.path.join(out_dir, folder_name)
 
             title_str = f' "{track["title"]}"' if track["title"] else ""
-            sparse_str = "  [sparse — may need to read far into file]" \
-                if ti in sparse_set else ""
+            sparse_str = ("  [sparse — may need to read far into file]"
+                          if track.get("sparse") else "")
             print(f"=== Track {ti}: {track['language']}{title_str} "
                   f"(stream {track['index']}) ==={sparse_str}")
 
-            # Reuse cached mid-file preview when it has enough data.
+            # Reuse cached analysis data when it has enough content.
             cached = preview_cache.get(ti)
             content_ds = ([d for d in cached if ds_has_content(d)]
                           if cached else [])
@@ -336,7 +426,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     else:
         # ---- Batch path: extract selected tracks to temp files ----
-        # Single FFmpeg pass reads the whole container once.
         selected_track_list = [tracks[i] for i in selected_indices]
         temp_dir = tempfile.mkdtemp(prefix="pgs_extract_")
 

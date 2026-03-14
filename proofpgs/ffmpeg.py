@@ -5,8 +5,10 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
-from .constants import format_time
+from .constants import format_time, ANALYSIS_MAX_PACKETS
 from .parser import read_sup_streaming
 
 
@@ -211,6 +213,108 @@ def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
               f"({format_time(duration_s)} / {format_time(duration_s)})")
     if rc != 0:
         raise subprocess.CalledProcessError(rc, cmd)
+
+    return sup_paths
+
+
+def extract_analysis_samples(ffmpeg_path: str, input_path: str,
+                              tracks: list, temp_dir: str,
+                              seek_s: float = None,
+                              max_packets: int = ANALYSIS_MAX_PACKETS,
+                              deadline: float = None,
+                              duration_s: float = None) -> list:
+    """Single FFmpeg pass to extract PGS samples for all tracks at once.
+
+    Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
+    to the middle of the file and ``-frames:s`` to cap each output at
+    *max_packets* packets (~25 display sets).
+
+    Two exit conditions (whichever fires first):
+      1. ``-frames:s`` cap — FFmpeg exits when ALL outputs are capped.
+      2. Watchdog *deadline* — kills FFmpeg at the wallclock budget limit.
+
+    When *duration_s* is set and there is no deadline, reads FFmpeg's
+    ``-progress`` output to display scan progress with elapsed time
+    (used by ``--mode validate``).
+
+    Returns a list of temp ``.sup`` file paths (index-aligned with
+    *tracks*).
+
+    stderr is sent to DEVNULL to prevent the Windows 4 KB pipe-buffer
+    deadlock (same rationale as ``extract_track_streaming``).
+    """
+    cmd = [ffmpeg_path, "-v", "error"]
+    if seek_s is not None and seek_s > 0:
+        cmd += ["-ss", str(seek_s)]
+
+    # Show progress when running unbounded (validate mode).
+    show_progress = (duration_s is not None and deadline is None)
+    if show_progress:
+        cmd += ["-progress", "pipe:1"]
+
+    cmd += ["-i", input_path]
+
+    sup_paths = []
+    for i, track in enumerate(tracks):
+        sup_path = os.path.join(temp_dir, f"track_{i}.sup")
+        # -flush_packets 1: flush after every packet so data is on disk
+        # if the watchdog kills FFmpeg before it exits naturally.
+        cmd += ["-map", f"0:{track['index']}", "-c", "copy",
+                "-flush_packets", "1"]
+        if max_packets is not None:
+            cmd += ["-frames:s", str(max_packets)]
+        cmd.append(sup_path)
+        sup_paths.append(sup_path)
+
+    # --- Launch FFmpeg ---------------------------------------------------
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE if show_progress else subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=show_progress,
+    )
+
+    # Watchdog thread: kill FFmpeg when the wallclock budget expires.
+    cancel = threading.Event()
+    if deadline is not None:
+        def _watchdog():
+            wait = max(0, deadline - time.monotonic())
+            if not cancel.wait(timeout=wait):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        threading.Thread(target=_watchdog, daemon=True).start()
+
+    # --- Wait / read progress --------------------------------------------
+    try:
+        if show_progress and proc.stdout:
+            start_t = time.monotonic()
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("out_time_us="):
+                    try:
+                        time_us = int(line.split("=", 1)[1])
+                        if time_us >= 0 and duration_s:
+                            pos_s = time_us / 1_000_000
+                            pct = min(100.0, pos_s / duration_s * 100)
+                            elapsed = time.monotonic() - start_t
+                            print(
+                                f"\r  Scanning: {pct:5.1f}%  "
+                                f"({format_time(pos_s)} / "
+                                f"{format_time(duration_s)}, "
+                                f"{elapsed:.1f}s elapsed)",
+                                end="", flush=True,
+                            )
+                    except (ValueError, ZeroDivisionError):
+                        pass
+            print()  # newline after progress
+        proc.wait()
+    finally:
+        cancel.set()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
     return sup_paths
 
