@@ -54,7 +54,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
         print(f"  Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
-                                limit=first)
+                                limit=first, detection=detection)
 
 
 def process_container(input_path: str, out_dir: str, mode: str,
@@ -323,6 +323,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
             saved = process_display_sets(
                 display_sets, track_out, mode, tonemap, nocrop,
                 limit=max_ds,
+                detection=tracks[ti].get("detection"),
             )
             total_saved += saved
             print()

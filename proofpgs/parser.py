@@ -79,6 +79,7 @@ def read_sup_streaming(stream, max_ds: int = None) -> list:
     display_sets = []
     current_ds = []
     content_count = 0
+    showed_progress = False
 
     while True:
         header = stream.read(13)
@@ -114,6 +115,7 @@ def read_sup_streaming(stream, max_ds: int = None) -> list:
                 print(f"\r  Streaming: {content_count}/{max_ds} subtitles "
                       f"(at {pos_str} in file)   ",
                       end="", flush=True)
+                showed_progress = True
                 if content_count >= max_ds:
                     break
             else:
@@ -121,8 +123,9 @@ def read_sup_streaming(stream, max_ds: int = None) -> list:
                     print(f"\r  Streaming: {content_count} subtitles "
                           f"(at {pos_str} in file)   ",
                           end="", flush=True)
+                    showed_progress = True
 
-    if display_sets:
+    if showed_progress:
         print()  # newline after progress
     return display_sets
 
