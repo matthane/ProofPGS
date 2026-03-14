@@ -32,6 +32,15 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
 | `constants.py` | PQ constants, segment type codes, file extensions, analysis budget (`Budget` class) |
+| `assets/` | Bundled resources (fonts, icons) — accessed via `Path(__file__).resolve().parent / "assets"` |
+
+## Bundled assets and licenses
+
+`proofpgs/assets/` contains resources shipped with the project (fonts, icons). Third-party license files live in `LICENSES/` at the project root.
+
+| Asset | License | File |
+|---|---|---|
+| Inter 18pt Medium (`assets/Inter_18pt-Medium.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
 
 ## Key technical decisions
 

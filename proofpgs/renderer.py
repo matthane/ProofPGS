@@ -2,9 +2,12 @@
 
 import os
 import struct
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
 
 from .constants import SEG_PCS, SEG_PDS, SEG_ODS
 from .parser import parse_pcs, parse_pds, parse_ods, decode_rle, pts_to_ms
@@ -178,10 +181,7 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
 
     # Pre-compute compare mode resources (font, detection, icons)
     if mode == "compare":
-        try:
-            label_font = ImageFont.truetype("arial.ttf", 14)
-        except (IOError, OSError):
-            label_font = ImageFont.load_default()
+        label_font = ImageFont.truetype(str(_ASSETS / "Inter_18pt-Medium.ttf"), 14)
 
         detected_side = None
         if detection and detection.get("verdict"):
@@ -192,15 +192,15 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
         red   = (200, 100, 100, 255)
 
         # Minimum panel width so labels always fit, even on short subtitles
-        _sdr_w = label_font.getlength("BT.709 (SDR decode)")
-        _hdr_w = label_font.getlength(f"BT.2020+PQ -> BT.709 ({tonemap})")
+        _sdr_w = label_font.getlength("BT.709 (SDR DECODE)")
+        _hdr_w = label_font.getlength(f"BT.2020+PQ \u2192 BT.709 ({tonemap.upper()})")
         if detected_side:
             check_icon = _render_check_icon(icon_r, green)
             x_icon     = _render_x_icon(icon_r, red)
             icon_w = 2 * icon_r + 1
             gap = 12
             _ind_w = gap + icon_w + 6 + int(
-                label_font.getlength("Not mastered for HDR"))
+                label_font.getlength("NOT MASTERED FOR HDR"))
             min_panel_w = int(max(_sdr_w, _hdr_w) + _ind_w) + 8
         else:
             min_panel_w = int(max(_sdr_w, _hdr_w)) + 8
@@ -247,8 +247,8 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             sdr_x = pad
             hdr_x = pad + w + gutter
 
-            sdr_label = "BT.709 (SDR decode)"
-            hdr_label = f"BT.2020+PQ -> BT.709 ({tonemap})"
+            sdr_label = "BT.709 (SDR DECODE)"
+            hdr_label = f"BT.2020+PQ \u2192 BT.709 ({tonemap.upper()})"
             text_y = pad + 6
             draw.text((sdr_x + 4, text_y), sdr_label, fill=(180, 180, 180, 255), font=label_font)
             draw.text((hdr_x + 4, text_y), hdr_label, fill=(180, 180, 180, 255), font=label_font)
@@ -260,22 +260,22 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
                 if detected_side == "sdr":
                     combined.paste(check_icon, (sdr_icon_x, text_y), mask=check_icon)
                     draw.text((sdr_icon_x + icon_w + 6, text_y),
-                              "Mastered for SDR", fill=green, font=label_font)
+                              "MASTERED FOR SDR", fill=green, font=label_font)
                 else:
                     combined.paste(x_icon, (sdr_icon_x, text_y), mask=x_icon)
                     draw.text((sdr_icon_x + icon_w + 6, text_y),
-                              "Not mastered for SDR", fill=red, font=label_font)
+                              "NOT MASTERED FOR SDR", fill=red, font=label_font)
 
                 # HDR side
                 hdr_icon_x = hdr_x + 4 + int(draw.textlength(hdr_label, font=label_font)) + gap
                 if detected_side == "hdr":
                     combined.paste(check_icon, (hdr_icon_x, text_y), mask=check_icon)
                     draw.text((hdr_icon_x + icon_w + 6, text_y),
-                              "Mastered for HDR", fill=green, font=label_font)
+                              "MASTERED FOR HDR", fill=green, font=label_font)
                 else:
                     combined.paste(x_icon, (hdr_icon_x, text_y), mask=x_icon)
                     draw.text((hdr_icon_x + icon_w + 6, text_y),
-                              "Not mastered for HDR", fill=red, font=label_font)
+                              "NOT MASTERED FOR HDR", fill=red, font=label_font)
 
             img_y = pad + label_h
             if img_sdr:

@@ -158,16 +158,20 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ```
 proofpgs/
-  __init__.py       # Public API exports
-  __main__.py       # python -m proofpgs entry point
-  cli.py            # Argument parsing and main()
-  constants.py      # PQ constants, segment types, file extensions
-  detect.py         # SDR/HDR auto-detection via PQ plausibility analysis
-  parser.py         # PGS binary parsing, segment parsers, RLE decoder
-  color.py          # Colour-space math and palette decoding (HDR & SDR)
-  renderer.py       # Display set rendering and PNG output
-  ffmpeg.py         # FFmpeg/ffprobe integration
-  interactive.py    # Interactive track and count selection
-  pipeline.py       # High-level orchestration
-  shellmenu.py      # Windows Explorer context menu integration
+  assets/             # Bundled resources (fonts, icons)
+    Inter_18pt-Medium.ttf
+  __init__.py         # Public API exports
+  __main__.py         # python -m proofpgs entry point
+  cli.py              # Argument parsing and main()
+  constants.py        # PQ constants, segment types, file extensions
+  detect.py           # SDR/HDR auto-detection via PQ plausibility analysis
+  parser.py           # PGS binary parsing, segment parsers, RLE decoder
+  color.py            # Colour-space math and palette decoding (HDR & SDR)
+  renderer.py         # Display set rendering and PNG output
+  ffmpeg.py           # FFmpeg/ffprobe integration
+  interactive.py      # Interactive track and count selection
+  pipeline.py         # High-level orchestration
+  shellmenu.py        # Windows Explorer context menu integration
+LICENSES/
+  OFL.txt             # SIL Open Font License 1.1 (Inter font)
 ```
