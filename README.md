@@ -60,7 +60,7 @@ python -m proofpgs movie.mkv --out ./my_output
 
 ProofPGS has five output modes:
 
-- **`auto`** (default) — Automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes with the correct pipeline. Falls back to `compare` if detection is inconclusive or tracks have mixed color spaces.
+- **`auto`** (default) — Automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes each track with the correct pipeline independently. A container with mixed SDR and HDR tracks will process each track using its own detected color space. Falls back to `compare` for any individual track where detection is inconclusive.
 - **`compare`** — For delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
 - **`hdr`** — Direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
 - **`sdr`** — Direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
@@ -87,7 +87,7 @@ python -m proofpgs movie.mkv --mode validate
 
 | Option | Values | Default | Description |
 |---|---|---|---|
-| `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate` | `auto` | `auto` detects color space per-track and decodes accordingly. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). |
+| `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate` | `auto` | `auto` detects color space per-track and decodes each track independently with the correct pipeline. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). |
 | `--tonemap` | `clip`, `reinhard` | `clip` | HDR-to-SDR tonemapping strategy. `clip` hard-clips at 203 nits reference white (best for subtitles). `reinhard` applies a soft roll-off. |
 | `--out` | path | `pgs_output/` next to input file | Output directory. |
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
@@ -114,17 +114,20 @@ On Windows 11, right-click a supported file and choose **Show more options** to 
 
 ## Output
 
-Each subtitle is saved as a PNG file named with its display set index and timestamp:
+Each subtitle is saved as a PNG file named with its display set index, timestamp, and decoded color space:
 
 ```
 pgs_output/
   track_0_eng/
-    ds_0000_12500ms_compare.png
-    ds_0001_15200ms_compare.png
+    ds_0000_12500ms_sdr.png
+    ds_0001_15200ms_sdr.png
     ...
   track_1_ger_forced/
+    ds_0000_8300ms_hdr.png
     ...
 ```
+
+The range suffix (`_sdr`, `_hdr`, or `_compare`) indicates which color pipeline was used to decode the subtitle.
 
 For `.sup` input (single track), images are written directly to the output directory without a track subfolder.
 

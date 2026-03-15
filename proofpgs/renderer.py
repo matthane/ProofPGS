@@ -322,7 +322,7 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             if not nocrop:
                 img = crop_to_content(img)
 
-            fname = f"ds_{i:04d}_{pts_ms:.0f}ms.png"
+            fname = f"ds_{i:04d}_{pts_ms:.0f}ms_{mode}.png"
             arr = np.array(img)
             if arr[:, :, 3].min() < 255:
                 img.save(os.path.join(out_dir, fname))

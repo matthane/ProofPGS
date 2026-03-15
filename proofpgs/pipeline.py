@@ -340,26 +340,26 @@ def process_container(input_path: str, out_dir: str, mode: str,
     else:
         max_ds = None  # process all — backward-compatible default
 
-    # --- Resolve auto mode from per-track detection ---
+    # --- Resolve mode per track ---
     if mode == "auto":
-        verdicts = set()
+        track_modes = {}
         for ti in selected_indices:
-            v = tracks[ti].get("detection", {}).get("verdict")
-            if v:
-                verdicts.add(v)
+            track_modes[ti] = _resolve_auto_mode(
+                tracks[ti].get("detection", {"verdict": None})
+            )
 
-        if len(verdicts) == 1:
-            mode = verdicts.pop()
-            mode_note = f"{mode.upper()} (auto-detected)"
-        elif len(verdicts) > 1:
-            mode = "compare"
-            mode_note = "COMPARE (mixed color spaces detected across tracks)"
+        unique = set(track_modes.values())
+        if len(unique) == 1:
+            mode_note = f"{next(iter(unique)).upper()} (auto-detected)"
         else:
-            mode = "compare"
-            mode_note = "COMPARE (detection inconclusive)"
+            per = ", ".join(
+                f"track {ti}: {track_modes[ti].upper()}"
+                for ti in selected_indices
+            )
+            mode_note = f"AUTO (per-track: {per})"
     elif mode in ("hdr", "sdr"):
+        track_modes = {ti: mode for ti in selected_indices}
         mode_note = mode.upper()
-        # Warn if any selected track's detection conflicts
         for ti in selected_indices:
             det = tracks[ti].get("detection", {})
             if det.get("verdict") and det["verdict"] != mode:
@@ -367,6 +367,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                       f"detected as {det['verdict'].upper()}. "
                       f"Subtitles may appear incorrect.")
     else:
+        track_modes = {ti: mode for ti in selected_indices}
         mode_note = mode.upper()
 
     print()
@@ -419,7 +420,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
             print(f"  Collected {len(display_sets)} display set(s).")
             saved = process_display_sets(
-                display_sets, track_out, mode, tonemap, nocrop,
+                display_sets, track_out, track_modes[ti], tonemap, nocrop,
                 limit=max_ds,
                 detection=tracks[ti].get("detection"),
             )
@@ -457,7 +458,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     continue
 
                 saved = process_sup_file(
-                    temp_sup, track_out, mode, tonemap, None, nocrop
+                    temp_sup, track_out, track_modes[ti], tonemap, None, nocrop
                 )
                 total_saved += saved
                 print()
