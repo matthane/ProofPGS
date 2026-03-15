@@ -217,9 +217,9 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
         logo = logo_raw.resize((logo_w, logo_h), Image.LANCZOS)
         footer_text = f"ProofPGS v{__version__}"
         footer_color = (100, 100, 100, 255)
-        source_parts = [p for p in (input_name, track_name) if p]
-        source_line = "  \u2022  ".join(source_parts) if source_parts else None
-        filename_line_h = 24 if source_line else 0
+        source_prefix_parts = [p for p in (input_name, track_name) if p]
+        source_prefix = "  \u2022  ".join(source_prefix_parts) if source_prefix_parts else None
+        filename_line_h = 24 if source_prefix else 0
         footer_h = 42 + filename_line_h
 
     for i, ds in enumerate(display_sets):
@@ -310,7 +310,13 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             # Footer: centred filename (if provided) above logo + app name/version
             footer_base = pad + label_h + h + footer_margin
 
-            if source_line:
+            if source_prefix:
+                total_s = int(pts_ms // 1000)
+                h_ts, m_ts = divmod(total_s, 3600)
+                m_ts, s_ts = divmod(m_ts, 60)
+                ms_frac = int(pts_ms % 1000)
+                timestamp = f"{h_ts:d}:{m_ts:02d}:{s_ts:02d}.{ms_frac:03d}"
+                source_line = source_prefix + "  \u2022  " + timestamp
                 src_w = int(draw.textlength(source_line, font=footer_font))
                 src_x = (total_w - src_w) // 2
                 draw.text((src_x, footer_base + 6),
