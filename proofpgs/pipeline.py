@@ -228,7 +228,9 @@ def _print_track_listing(tracks):
 # ---------------------------------------------------------------------------
 
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
-                     tonemap: str, first, nocrop: bool) -> int:
+                     tonemap: str, first, nocrop: bool,
+                     input_name: str = None,
+                     track_name: str = None) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
     display_sets = read_sup(sup_path)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
@@ -254,7 +256,9 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
         print(f"  Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
-                                limit=first, detection=detection)
+                                limit=first, detection=detection,
+                                input_name=input_name or os.path.basename(sup_path),
+                                track_name=track_name)
 
 
 def process_container(input_path: str, out_dir: str, mode: str,
@@ -419,10 +423,15 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 continue
 
             print(f"  Collected {len(display_sets)} display set(s).")
+            track_label = f"Stream {track['index']}: {track['language']}"
+            if track["title"]:
+                track_label += f' "{track["title"]}"'
             saved = process_display_sets(
                 display_sets, track_out, track_modes[ti], tonemap, nocrop,
                 limit=max_ds,
                 detection=tracks[ti].get("detection"),
+                input_name=os.path.basename(input_path),
+                track_name=track_label,
             )
             total_saved += saved
             print()
@@ -457,8 +466,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
                           f"for stream {track['index']}")
                     continue
 
+                track_label = f"Stream {track['index']}: {track['language']}"
+                if track["title"]:
+                    track_label += f' "{track["title"]}"'
                 saved = process_sup_file(
-                    temp_sup, track_out, track_modes[ti], tonemap, None, nocrop
+                    temp_sup, track_out, track_modes[ti], tonemap, None, nocrop,
+                    input_name=os.path.basename(input_path),
+                    track_name=track_label,
                 )
                 total_saved += saved
                 print()

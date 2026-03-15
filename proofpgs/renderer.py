@@ -167,7 +167,9 @@ def _render_x_icon(r, color):
 
 def process_display_sets(display_sets: list, out_dir: str, mode: str,
                          tonemap: str, nocrop: bool,
-                         limit: int = None, detection: dict = None) -> int:
+                         limit: int = None, detection: dict = None,
+                         input_name: str = None,
+                         track_name: str = None) -> int:
     """Render display sets and save PNGs to out_dir.
 
     Args:
@@ -213,9 +215,12 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
         logo_h = 24
         logo_w = int(logo_raw.width * logo_h / logo_raw.height)
         logo = logo_raw.resize((logo_w, logo_h), Image.LANCZOS)
-        footer_text = f"PROOFPGS V{__version__}"
+        footer_text = f"ProofPGS v{__version__}"
         footer_color = (100, 100, 100, 255)
-        footer_h = 42
+        source_parts = [p for p in (input_name, track_name) if p]
+        source_line = "  \u2022  ".join(source_parts) if source_parts else None
+        filename_line_h = 24 if source_line else 0
+        footer_h = 42 + filename_line_h
 
     for i, ds in enumerate(display_sets):
 
@@ -302,14 +307,22 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             draw.line([(div_x, img_y), (div_x, img_y + h)],
                       fill=(60, 60, 60, 255), width=1)
 
-            # Footer: centred logo + app name/version
-            footer_top = pad + label_h + h + footer_margin + (footer_h - logo_h) // 2
+            # Footer: centred filename (if provided) above logo + app name/version
+            footer_base = pad + label_h + h + footer_margin
+
+            if source_line:
+                src_w = int(draw.textlength(source_line, font=footer_font))
+                src_x = (total_w - src_w) // 2
+                draw.text((src_x, footer_base + 6),
+                          source_line, fill=footer_color, font=footer_font)
+
+            logo_top = footer_base + filename_line_h + (42 - logo_h) // 2
             text_w = int(draw.textlength(footer_text, font=footer_font))
             content_gap = 6
             content_w = logo_w + content_gap + text_w
             cx = (total_w - content_w) // 2
-            combined.paste(logo, (cx, footer_top), mask=logo)
-            draw.text((cx + logo_w + content_gap, footer_top + 1),
+            combined.paste(logo, (cx, logo_top), mask=logo)
+            draw.text((cx + logo_w + content_gap, logo_top + 1),
                       footer_text, fill=footer_color, font=footer_font)
 
             fname = f"ds_{i:04d}_{pts_ms:.0f}ms_compare.png"
