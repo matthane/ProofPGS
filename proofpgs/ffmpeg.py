@@ -30,9 +30,13 @@ def check_ffmpeg():
 def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
     """Use ffprobe to discover all PGS subtitle streams in a container.
 
-    Returns (tracks, duration_s) where tracks is a list of dicts with keys:
+    Returns (tracks, duration_s, start_time_s) where tracks is a list of
+    dicts with keys:
       index, language, title, forced, default, num_frames
-    and duration_s is the container duration in seconds (or None).
+    duration_s is the container duration in seconds (or None), and
+    start_time_s is the container's initial PTS offset in seconds (or None).
+    Blu-ray M2TS streams typically have a non-zero start_time; MKV starts
+    at ~0.
     """
     try:
         result = subprocess.run(
@@ -43,17 +47,23 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
         )
     except subprocess.CalledProcessError as e:
         print(f"[error] ffprobe failed on {input_path}: {e.stderr.strip()}")
-        return [], None
+        return [], None, None
 
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
         print(f"[error] Could not parse ffprobe output for {input_path}.")
-        return [], None
+        return [], None, None
 
     duration_s = None
     try:
         duration_s = float(data.get("format", {}).get("duration", ""))
+    except (ValueError, TypeError):
+        pass
+
+    start_time_s = None
+    try:
+        start_time_s = float(data.get("format", {}).get("start_time", ""))
     except (ValueError, TypeError):
         pass
 
@@ -90,7 +100,7 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
             "default":    bool(disp.get("default", 0)),
             "num_frames": num_frames,
         })
-    return tracks, duration_s
+    return tracks, duration_s, start_time_s
 
 
 
@@ -172,7 +182,7 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     """
     cmd = [ffmpeg_path, "-v", "error"]
     if seek_s is not None and seek_s > 0:
-        cmd += ["-ss", str(seek_s)]
+        cmd += ["-ss", str(seek_s), "-copyts"]
 
     cmd += ["-progress", "pipe:1"]
 
@@ -272,7 +282,7 @@ def extract_track_streaming(ffmpeg_path: str, input_path: str,
     """
     cmd = [ffmpeg_path, "-v", "error"]
     if seek_s is not None and seek_s > 0:
-        cmd += ["-ss", str(seek_s)]
+        cmd += ["-ss", str(seek_s), "-copyts"]
     if read_duration_s is not None and read_duration_s > 0:
         cmd += ["-t", str(read_duration_s)]
     cmd += ["-i", input_path,

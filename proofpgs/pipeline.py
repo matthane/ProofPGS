@@ -21,6 +21,22 @@ from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PE
 _SPARSE_DS_PER_MIN = 1.0
 
 
+def _adjust_pts_offset(display_sets, start_time_s):
+    """Subtract container start_time from all segment PTS values.
+
+    Blu-ray M2TS streams have a non-zero initial PTS offset (the transport
+    stream clock doesn't start at zero).  MKV files remuxed from the same
+    disc start at ~0.  Subtracting start_time normalises both so that PTS
+    represents elapsed time from the start of the content.
+    """
+    if not start_time_s or start_time_s <= 0:
+        return
+    offset = int(start_time_s * 90_000)
+    for ds in display_sets:
+        for seg in ds:
+            seg["pts"] = max(0, seg["pts"] - offset)
+
+
 def _resolve_auto_mode(detection: dict) -> str:
     """Resolve 'auto' mode using a detection result. Returns resolved mode."""
     if detection["verdict"] is not None:
@@ -246,9 +262,11 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      tonemap: str, first, nocrop: bool,
                      input_name: str = None,
                      track_name: str = None,
-                     threads: int = None) -> int:
+                     threads: int = None,
+                     start_time_s: float = None) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
     display_sets = read_sup(sup_path)
+    _adjust_pts_offset(display_sets, start_time_s)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
     print(f"  Found {total} subtitle display sets ({len(display_sets)} total incl. clears).")
 
@@ -295,7 +313,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     ffmpeg_path, ffprobe_path = check_ffmpeg()
 
     print(f"Probing: {input_path}")
-    tracks, duration_s = probe_pgs_tracks(ffprobe_path, input_path)
+    tracks, duration_s, start_time_s = probe_pgs_tracks(ffprobe_path, input_path)
 
     if not tracks:
         print("No PGS subtitle tracks found.")
@@ -440,6 +458,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 print("  No subtitles found.")
                 continue
 
+            _adjust_pts_offset(display_sets, start_time_s)
             content_total = sum(1 for d in display_sets if ds_has_content(d))
             print(f"  Collected {content_total} subtitle(s).")
             track_label = f"Stream {track['index']}: {track['language']}"
@@ -494,6 +513,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     input_name=os.path.basename(input_path),
                     track_name=track_label,
                     threads=threads,
+                    start_time_s=start_time_s,
                 )
                 total_saved += saved
                 print()
