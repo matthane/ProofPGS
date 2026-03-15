@@ -158,7 +158,8 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                               tracks: list, temp_dir: str,
                               seek_s: float = None,
                               max_packets: int = ANALYSIS_MAX_DS,
-                              deadline: float = None) -> list:
+                              deadline: float = None,
+                              ready_check=None) -> list:
     """Single FFmpeg pass to extract PGS samples for all tracks at once.
 
     Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
@@ -167,9 +168,14 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     transport stream formats (M2TS/TS) where each packet carries a
     single PGS segment rather than a full display set.
 
-    Two exit conditions (whichever fires first):
+    Three exit conditions (whichever fires first):
       1. ``-frames:s`` cap — FFmpeg exits when ALL outputs are capped.
-      2. Watchdog *deadline* — kills FFmpeg at the wallclock budget limit.
+      2. Watchdog *deadline* — kills FFmpeg at the wallclock budget limit
+         (safety net for sparse tracks in budgeted mode).
+      3. *ready_check* callback — polls temp files every 2 s and kills
+         FFmpeg once the callback returns True (all tracks detected).
+         Can be combined with *deadline* so detection wins when fast
+         and the deadline catches sparse-track stalls.
 
     Displays ``Scanning... (Xs elapsed)`` via FFmpeg's ``-progress``
     output, cleared when extraction finishes.
@@ -208,17 +214,27 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
         text=True,
     )
 
-    # Watchdog thread: kill FFmpeg when the wallclock budget expires.
+    # Watchdog thread: kill FFmpeg when extraction is "done enough".
+    # Both checks can be active simultaneously (whichever fires first):
+    #   - ready_check: polls temp files, kills once all tracks detected.
+    #   - deadline: kills at the wallclock budget limit (safety net for
+    #     sparse tracks that may never reach conclusive detection).
     cancel = threading.Event()
-    if deadline is not None:
+    if deadline is not None or ready_check is not None:
         def _watchdog():
-            wait = max(0, deadline - time.monotonic())
-            if not cancel.wait(timeout=wait):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-                cancel.set()
+            _POLL_S = 1.0
+            while not cancel.wait(timeout=_POLL_S):
+                if ready_check is not None and ready_check(sup_paths):
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    break
+            else:
+                return  # cancel was set (FFmpeg exited naturally)
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            cancel.set()
         threading.Thread(target=_watchdog, daemon=True).start()
 
     # --- Wait / read progress --------------------------------------------

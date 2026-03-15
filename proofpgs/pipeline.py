@@ -21,6 +21,30 @@ from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PE
 _SPARSE_DS_PER_MIN = 1.0
 
 
+def _check_all_detected(paths):
+    """True when every track's temp file has conclusive SDR/HDR detection.
+
+    Called by the content-based watchdog in validate mode to decide when
+    FFmpeg can be killed early.  Reads temp .sup files that FFmpeg is
+    actively writing to — safe because ``-flush_packets 1`` ensures
+    complete PGS segments on disk, and ``read_sup`` discards any
+    incomplete trailing display set.
+    """
+    for p in paths:
+        try:
+            if not os.path.isfile(p) or os.path.getsize(p) == 0:
+                return False
+            ds = read_sup(p)
+            if not ds:
+                return False
+            det = detect_from_palettes(ds)
+            if det["verdict"] is None:
+                return False
+        except Exception:
+            return False
+    return True
+
+
 def _adjust_pts_offset(display_sets, start_time_s):
     """Subtract container start_time from all segment PTS values.
 
@@ -79,6 +103,11 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     label = "Validating" if budget is None else "Analyzing"
     print(f"  {label} {len(extract_tracks)} PGS track(s)...")
 
+    # Content-based watchdog: kill FFmpeg as soon as all tracks have
+    # conclusive detection.  In budgeted mode the deadline acts as a
+    # fallback for sparse tracks; in validate mode there is no deadline.
+    ready_fn = _check_all_detected
+
     # --- Single FFmpeg pass for all tracks ---
     temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
     try:
@@ -87,6 +116,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             seek_s=seek_s,
             max_packets=max_packets,
             deadline=budget.deadline() if budget else None,
+            ready_check=ready_fn,
         )
 
         for list_i, ti in enumerate(track_indices):
@@ -169,6 +199,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                     seek_s=None,  # from start of file
                     max_packets=max_packets,
                     deadline=budget.deadline() if budget else None,
+                    ready_check=ready_fn,
                 )
                 for list_i, ti in enumerate(retry_indices):
                     t = tracks[ti]
