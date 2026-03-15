@@ -38,11 +38,20 @@ def format_time(seconds: float) -> str:
 # FFmpeg is killed if analysis takes longer than this.
 LISTING_BUDGET_S = 10.0
 
-# Per-track PGS packet cap passed to FFmpeg via -frames:s.
-# ~25 display sets at ~5 segments per DS.  Increase for more analysis
-# accuracy; decrease for a faster listing.  FFmpeg exits naturally once
-# every output track hits this cap.
-ANALYSIS_MAX_PACKETS = 125
+# Target display sets for analysis, also used as the per-track FFmpeg
+# packet cap via -frames:s.  In MKV/MP4 one packet = one DS, so this
+# is passed directly.  In M2TS/TS one packet = one PGS segment (~5
+# per DS), so the caller multiplies by TS_SEGMENTS_PER_DS.
+#
+# More samples improve estimation accuracy but slow down the listing
+# phase — especially for M2TS over network storage where extraction
+# can exceed the LISTING_BUDGET_S wallclock limit.  Can be reduced
+# (e.g. to 50) if analysis speed is more important than accuracy.
+ANALYSIS_MAX_DS = 125
+
+# Typical number of PGS segments per display set in transport streams.
+# Used to scale ANALYSIS_MAX_DS for M2TS/TS containers.
+TS_SEGMENTS_PER_DS = 5
 
 
 class Budget:

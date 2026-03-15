@@ -42,7 +42,7 @@ def _main():
     parser.add_argument("--out", default=None,
                         help="Output directory. Default: pgs_output/ next to the input file")
     parser.add_argument("--first", type=int, default=None,
-                        help="Decode only the first N display sets. "
+                        help="Decode only the first N subtitles. "
                              "For containers, interactive prompt defaults to 10")
     parser.add_argument("--tracks", default=None,
                         help="Track indices to process (comma-separated, e.g. 0,2,3). "

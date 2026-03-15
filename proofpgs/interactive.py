@@ -43,8 +43,8 @@ def select_tracks_interactive(tracks: list,
 
 
 def select_count_interactive() -> int | None:
-    """Prompt the user for how many display sets to process per track."""
-    print("How many display sets (subtitle images) to process per track?")
+    """Prompt the user for how many subtitles to process per track."""
+    print("How many subtitles to process per track?")
     print("  [Enter]    10 (default — fast preview)")
     print("  [number]   Custom count")
     print("  [a]        All (reads entire file)")

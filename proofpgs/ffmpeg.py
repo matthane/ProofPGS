@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from .constants import format_time, ANALYSIS_MAX_PACKETS
+from .constants import format_time, ANALYSIS_MAX_DS
 from .parser import read_sup_streaming
 
 
@@ -93,79 +93,6 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
     return tracks, duration_s
 
 
-SAMPLE_SECONDS = 120  # 2-minute sample window for packet counting
-# A PGS display set consists of multiple segments (PCS, WDS, PDS, ODS,
-# END…).  ffprobe -count_packets counts raw segments, but MKV's
-# NUMBER_OF_FRAMES counts at the display-set level.  We normalise
-# sampled packet counts to display-set estimates using this divisor.
-SEGMENTS_PER_DS = 5
-
-
-def sample_packet_counts(ffprobe_path: str, input_path: str,
-                         stream_indices: list, duration_s: float) -> tuple:
-    """Estimate PGS display sets via a 2-min mid-file packet sample.
-
-    Samples from the midpoint to avoid intros/credits that lack subtitles.
-    Uses ffprobe -read_intervals to avoid reading the entire container.
-    Raw packet counts are divided by SEGMENTS_PER_DS to convert from
-    PGS segments to display-set estimates, matching the unit used by
-    MKV's NUMBER_OF_FRAMES tag.
-
-    Returns (counts_dict, is_estimated) where counts_dict maps
-    stream index -> estimated display-set count, and is_estimated
-    is True when the count was extrapolated from a sample.
-    Returns ({}, False) on any failure (graceful degradation).
-    """
-    if not duration_s or duration_s <= 0:
-        return {}, False
-
-    is_estimated = duration_s > SAMPLE_SECONDS
-
-    cmd = [ffprobe_path, "-v", "quiet", "-print_format", "json",
-           "-count_packets", "-show_streams", "-select_streams", "s"]
-
-    if is_estimated:
-        # File is longer than the sample window — read a 2-minute slice
-        # from the middle to avoid intros/credits that lack subtitles.
-        midpoint = max(0, (duration_s - SAMPLE_SECONDS) / 2)
-        cmd += ["-read_intervals", f"{midpoint}%+{SAMPLE_SECONDS}"]
-
-    # Short files: skip -read_intervals and just count the whole file.
-    cmd.append(input_path)
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True,
-                                check=True)
-    except subprocess.CalledProcessError:
-        return {}, False
-
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}, False
-
-    counts = {}
-    for s in data.get("streams", []):
-        idx = s.get("index")
-        if idx not in stream_indices:
-            continue
-        nb = s.get("nb_read_packets")
-        if nb is None:
-            continue
-        try:
-            sample_count = int(nb)
-        except (ValueError, TypeError):
-            continue
-        # Convert raw segment count to display-set estimate, then
-        # extrapolate to the full duration if we only sampled a window.
-        ds_count = sample_count / SEGMENTS_PER_DS
-        if is_estimated:
-            counts[idx] = round(ds_count * (duration_s / SAMPLE_SECONDS))
-        else:
-            counts[idx] = round(ds_count)
-
-    return counts, is_estimated
-
 
 def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
                            tracks: list, temp_dir: str,
@@ -220,13 +147,15 @@ def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
 def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                               tracks: list, temp_dir: str,
                               seek_s: float = None,
-                              max_packets: int = ANALYSIS_MAX_PACKETS,
+                              max_packets: int = ANALYSIS_MAX_DS,
                               deadline: float = None) -> list:
     """Single FFmpeg pass to extract PGS samples for all tracks at once.
 
     Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
     to the middle of the file and ``-frames:s`` to cap each output at
-    *max_packets* packets (~25 display sets).
+    *max_packets* packets.  The caller should scale this value for
+    transport stream formats (M2TS/TS) where each packet carries a
+    single PGS segment rather than a full display set.
 
     Two exit conditions (whichever fires first):
       1. ``-frames:s`` cap — FFmpeg exits when ALL outputs are capped.

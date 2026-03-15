@@ -15,7 +15,7 @@ from .ffmpeg import (
     extract_track_streaming, extract_analysis_samples,
 )
 from .interactive import select_tracks_interactive, select_count_interactive
-from .constants import Budget, LISTING_BUDGET_S
+from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
 
 # Tracks with fewer display sets per minute than this are flagged sparse.
 _SPARSE_DS_PER_MIN = 1.0
@@ -38,7 +38,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     once, then run detection and count estimation on each.
 
     Updates each track dict in-place with:
-      detection, num_frames (if not set), estimated, sparse, analysis_bailed
+      detection, num_frames, sparse, analysis_bailed
     Caches extracted display sets in *preview_cache*.
     """
     if not track_indices:
@@ -51,6 +51,15 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
 
     extract_tracks = [tracks[ti] for ti in track_indices]
 
+    # Transport streams (M2TS/TS) demux one PGS segment per packet,
+    # while MKV/MP4 pack a full display set into each packet.  Scale
+    # the packet cap so both formats yield ~the same number of DS.
+    ext = os.path.splitext(input_path)[1].lower()
+    if ext in (".m2ts", ".ts", ".mts"):
+        max_packets = ANALYSIS_MAX_DS * TS_SEGMENTS_PER_DS
+    else:
+        max_packets = ANALYSIS_MAX_DS
+
     label = "Validating" if budget is None else "Analyzing"
     print(f"  {label} {len(extract_tracks)} PGS track(s)...")
 
@@ -60,6 +69,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
         sup_paths = extract_analysis_samples(
             ffmpeg_path, input_path, extract_tracks, temp_dir,
             seek_s=seek_s,
+            max_packets=max_packets,
             deadline=budget.deadline() if budget else None,
         )
 
@@ -72,27 +82,33 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             else:
                 ds = []
 
+            # Cap to ANALYSIS_MAX_DS display sets so estimates are
+            # consistent across container formats.  For MKV, -frames:s
+            # already limits to this many DS.  For M2TS, the scaled
+            # packet cap may yield slightly more DS (clear DS have
+            # fewer segments), so truncate to keep the sample uniform.
+            if len(ds) > ANALYSIS_MAX_DS:
+                ds = ds[:ANALYSIS_MAX_DS]
+
             preview_cache[ti] = ds
             content_count = sum(1 for d in ds if ds_has_content(d))
 
             # --- Subtitle count estimation ---
-            if t["num_frames"] is None:
-                if content_count > 0 and not is_short and has_duration:
-                    # Extrapolate from PTS span of the gathered data.
-                    first_pts = ds[0][0]["pts"] / 90_000.0
-                    last_pts = ds[-1][0]["pts"] / 90_000.0
-                    pts_span = last_pts - first_pts
-                    if pts_span > 0:
-                        t["num_frames"] = round(
-                            content_count * (duration_s / pts_span)
-                        )
-                    else:
-                        # All DS at same PTS — use raw count.
-                        t["num_frames"] = content_count
-                    t["estimated"] = True
-                elif content_count > 0:
+            # Always use PTS extrapolation so estimates are consistent
+            # across container formats (MKV, M2TS, MP4, etc.).
+            if content_count > 0 and not is_short and has_duration:
+                first_pts = ds[0][0]["pts"] / 90_000.0
+                last_pts = ds[-1][0]["pts"] / 90_000.0
+                pts_span = last_pts - first_pts
+                if pts_span > 0:
+                    t["num_frames"] = round(
+                        content_count * (duration_s / pts_span)
+                    )
+                else:
+                    # All DS at same PTS — use raw count.
                     t["num_frames"] = content_count
-                    t["estimated"] = False
+            elif content_count > 0:
+                t["num_frames"] = content_count
 
             # --- Color space detection ---
             if ds:
@@ -135,8 +151,8 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                 sup_paths2 = extract_analysis_samples(
                     ffmpeg_path, input_path, retry_tracks, temp_dir2,
                     seek_s=None,  # from start of file
+                    max_packets=max_packets,
                     deadline=budget.deadline() if budget else None,
-                    duration_s=duration_s if budget is None else None,
                 )
                 for list_i, ti in enumerate(retry_indices):
                     t = tracks[ti]
@@ -156,7 +172,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                             preview_cache[ti] = ds
                             if t["num_frames"] is None:
                                 t["num_frames"] = content_count
-                                t["estimated"] = True
                             t["analysis_bailed"] = False
             finally:
                 shutil.rmtree(temp_dir2, ignore_errors=True)
@@ -187,12 +202,12 @@ def _print_track_listing(tracks):
 
         # Subtitle count
         if t["num_frames"] is not None:
-            if t.get("estimated"):
-                n = t['num_frames']
-                n = n // 100 * 100 if n > 100 else n // 10 * 10
-                count_str = f"  (~{n} subtitles est.)"
-            else:
-                count_str = f"  (~{t['num_frames']} subtitles)"
+            n = t['num_frames']
+            if n > 100:
+                n = n // 100 * 100
+            elif n > 10:
+                n = n // 10 * 10
+            count_str = f"  (~{n} subtitles)"
         else:
             count_str = ""
 
@@ -380,7 +395,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print()
     track_desc = ", ".join(str(i) for i in selected_indices)
     count_desc = str(max_ds) if max_ds is not None else "all"
-    print(f"Processing track(s) [{track_desc}], {count_desc} display set(s) each.")
+    print(f"Processing track(s) [{track_desc}], {count_desc} subtitle(s) each.")
     print(f"Mode: {mode_note}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
     print()
 
@@ -422,10 +437,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     continue
 
             if not display_sets:
-                print("  No display sets found.")
+                print("  No subtitles found.")
                 continue
 
-            print(f"  Collected {len(display_sets)} display set(s).")
+            content_total = sum(1 for d in display_sets if ds_has_content(d))
+            print(f"  Collected {content_total} subtitle(s).")
             track_label = f"Stream {track['index']}: {track['language']}"
             if track["title"]:
                 track_label += f' "{track["title"]}"'
