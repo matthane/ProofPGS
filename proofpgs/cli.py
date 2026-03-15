@@ -49,6 +49,9 @@ def _main():
                              "Use 'all' for all tracks. Default: prompt interactively")
     parser.add_argument("--nocrop", action="store_true",
                         help="Output full video-frame sized PNGs instead of cropping to content")
+    parser.add_argument("--threads", type=int, default=None,
+                        help="Number of parallel rendering threads "
+                             "(default: auto, up to 8)")
     args = parser.parse_args()
 
     if args.install:
@@ -78,16 +81,17 @@ def _main():
     if ext in SUP_EXTENSIONS:
         print(f"Reading: {args.input_file}")
         saved = process_sup_file(args.input_file, args.out, args.mode,
-                                 args.tonemap, args.first, args.nocrop)
+                                 args.tonemap, args.first, args.nocrop,
+                                 threads=args.threads)
         if args.mode != "validate":
             print(f"\nDone. {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
-                          tracks_arg=args.tracks)
+                          tracks_arg=args.tracks, threads=args.threads)
     else:
         print(f"[warn] Unrecognised extension '{ext}'. "
               f"Attempting as container file...")
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
-                          tracks_arg=args.tracks)
+                          tracks_arg=args.tracks, threads=args.threads)

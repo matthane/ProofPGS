@@ -230,7 +230,8 @@ def _print_track_listing(tracks):
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      tonemap: str, first, nocrop: bool,
                      input_name: str = None,
-                     track_name: str = None) -> int:
+                     track_name: str = None,
+                     threads: int = None) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
     display_sets = read_sup(sup_path)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
@@ -258,12 +259,14 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
                                 input_name=input_name or os.path.basename(sup_path),
-                                track_name=track_name)
+                                track_name=track_name,
+                                threads=threads)
 
 
 def process_container(input_path: str, out_dir: str, mode: str,
                       tonemap: str, first, nocrop: bool,
-                      tracks_arg: str = None) -> None:
+                      tracks_arg: str = None,
+                      threads: int = None) -> None:
     """Extract and decode PGS tracks from a video container.
 
     When a display-set limit is active (--first or interactive default),
@@ -432,6 +435,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 detection=tracks[ti].get("detection"),
                 input_name=os.path.basename(input_path),
                 track_name=track_label,
+                threads=threads,
             )
             total_saved += saved
             print()
@@ -473,6 +477,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     temp_sup, track_out, track_modes[ti], tonemap, None, nocrop,
                     input_name=os.path.basename(input_path),
                     track_name=track_label,
+                    threads=threads,
                 )
                 total_saved += saved
                 print()
