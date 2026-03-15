@@ -11,10 +11,10 @@ _SUBMENU_KEY = "ProofPGS.SubMenu"
 # (registry_name, display_label, mode_value, use_pause)
 # use_pause: validate exits immediately so needs & pause to keep the window open
 _MODES = [
-    ("01_auto",     "Auto (detect color space)",      "auto",     False),
+    ("01_auto",     "Auto export (detect color space)",      "auto",     False),
     ("02_compare",  "Compare (SDR && HDR side-by-side)", "compare",  False),
-    ("03_hdr",      "HDR (BT.2020+PQ)",               "hdr",      False),
-    ("04_sdr",      "SDR (BT.709)",                    "sdr",      False),
+    ("03_hdr",      "Export as HDR (BT.2020+PQ)",               "hdr",      False),
+    ("04_sdr",      "Export as SDR (BT.709)",                    "sdr",      False),
     ("05_validate", "Validate (show track info only)", "validate", True),
 ]
 
