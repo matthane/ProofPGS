@@ -61,7 +61,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             ffmpeg_path, input_path, extract_tracks, temp_dir,
             seek_s=seek_s,
             deadline=budget.deadline() if budget else None,
-            duration_s=duration_s if budget is None else None,
         )
 
         for list_i, ti in enumerate(track_indices):
@@ -181,7 +180,7 @@ def _print_track_listing(tracks):
 
         if t.get("analysis_bailed"):
             has_bailed = True
-            extra = "  [not analyzed — sparse subtitles]"
+            extra = "  [not analyzed — too few samples]"
             print(f"  [{ti}] stream {t['index']}: "
                   f"{t['language']}{title_str}{flag_str}{extra}")
             continue
@@ -189,7 +188,9 @@ def _print_track_listing(tracks):
         # Subtitle count
         if t["num_frames"] is not None:
             if t.get("estimated"):
-                count_str = f"  (~{t['num_frames']} subtitles est.)"
+                n = t['num_frames']
+                n = n // 100 * 100 if n > 100 else n // 10 * 10
+                count_str = f"  (~{n} subtitles est.)"
             else:
                 count_str = f"  (~{t['num_frames']} subtitles)"
         else:
@@ -198,9 +199,7 @@ def _print_track_listing(tracks):
         # Detection
         det = t.get("detection", {})
         if det.get("verdict"):
-            pq = det.get("max_pq_channel", 0)
-            det_str = (f"  [{det['verdict'].upper()}, "
-                       f"PQ-max: {pq:.3f}]")
+            det_str = f"  [Mastered for {det['verdict'].upper()}]"
         else:
             det_str = ""
 
@@ -293,6 +292,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         duration_s, preview_cache, budget=budget)
 
     # === Phase 3: Display track listing ===
+    # Clear the "Validating/Analyzing" status line now that results are ready.
+    print("\033[A\033[K", end="", flush=True)
     has_bailed = _print_track_listing(tracks)
 
     if mode == "validate":
@@ -323,6 +324,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
                                 input_path, duration_s, preview_cache,
                                 budget=None)
+                print("\033[A\033[K", end="", flush=True)
                 has_bailed = _print_track_listing(tracks)
                 continue
             selected_indices = selection

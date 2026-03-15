@@ -221,8 +221,7 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                               tracks: list, temp_dir: str,
                               seek_s: float = None,
                               max_packets: int = ANALYSIS_MAX_PACKETS,
-                              deadline: float = None,
-                              duration_s: float = None) -> list:
+                              deadline: float = None) -> list:
     """Single FFmpeg pass to extract PGS samples for all tracks at once.
 
     Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
@@ -233,9 +232,8 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
       1. ``-frames:s`` cap — FFmpeg exits when ALL outputs are capped.
       2. Watchdog *deadline* — kills FFmpeg at the wallclock budget limit.
 
-    When *duration_s* is set and there is no deadline, reads FFmpeg's
-    ``-progress`` output to display scan progress with elapsed time
-    (used by ``--mode validate``).
+    Displays ``Scanning... (Xs elapsed)`` via FFmpeg's ``-progress``
+    output, cleared when extraction finishes.
 
     Returns a list of temp ``.sup`` file paths (index-aligned with
     *tracks*).
@@ -247,10 +245,7 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     if seek_s is not None and seek_s > 0:
         cmd += ["-ss", str(seek_s)]
 
-    # Show progress when running unbounded (validate mode).
-    show_progress = (duration_s is not None and deadline is None)
-    if show_progress:
-        cmd += ["-progress", "pipe:1"]
+    cmd += ["-progress", "pipe:1"]
 
     cmd += ["-i", input_path]
 
@@ -269,9 +264,9 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     # --- Launch FFmpeg ---------------------------------------------------
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE if show_progress else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        text=show_progress,
+        text=True,
     )
 
     # Watchdog thread: kill FFmpeg when the wallclock budget expires.
@@ -284,31 +279,25 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                     proc.kill()
                 except OSError:
                     pass
+                cancel.set()
         threading.Thread(target=_watchdog, daemon=True).start()
 
     # --- Wait / read progress --------------------------------------------
     try:
-        if show_progress and proc.stdout:
+        if proc.stdout:
             start_t = time.monotonic()
+            print("\r  Scanning...", end="", flush=True)
             for line in proc.stdout:
-                line = line.strip()
-                if line.startswith("out_time_us="):
-                    try:
-                        time_us = int(line.split("=", 1)[1])
-                        if time_us >= 0 and duration_s:
-                            pos_s = time_us / 1_000_000
-                            pct = min(100.0, pos_s / duration_s * 100)
-                            elapsed = time.monotonic() - start_t
-                            print(
-                                f"\r  Scanning: {pct:5.1f}%  "
-                                f"({format_time(pos_s)} / "
-                                f"{format_time(duration_s)}, "
-                                f"{elapsed:.1f}s elapsed)",
-                                end="", flush=True,
-                            )
-                    except (ValueError, ZeroDivisionError):
-                        pass
-            print()  # newline after progress
+                if cancel.is_set():
+                    break
+                if line.strip() == "progress=continue":
+                    elapsed = time.monotonic() - start_t
+                    print(
+                        f"\r  Scanning... "
+                        f"({elapsed:.1f}s elapsed)",
+                        end="", flush=True,
+                    )
+            print("\r\033[K", end="", flush=True)  # clear progress line
         proc.wait()
     finally:
         cancel.set()
