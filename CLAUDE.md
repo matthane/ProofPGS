@@ -40,7 +40,7 @@ There is no test suite. Validation is done by visual inspection of the output PN
 
 | Asset | License | File |
 |---|---|---|
-| Inter 18pt Medium (`assets/Inter_18pt-Medium.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
+| Google Sans 17pt Medium (`assets/GoogleSans_17pt-Medium.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
 
 ## Key technical decisions
 

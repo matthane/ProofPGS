@@ -187,7 +187,7 @@ def _render_x_icon(r, color):
 
 def _build_compare_resources(detection, tonemap, input_name, track_name):
     """Build the immutable resource bundle used by compare-mode workers."""
-    label_font = ImageFont.truetype(str(_ASSETS / "Inter_18pt-Medium.ttf"), 14)
+    label_font = ImageFont.truetype(str(_ASSETS / "GoogleSans_17pt-Medium.ttf"), 14)
 
     detected_side = None
     if detection and detection.get("verdict"):
@@ -215,9 +215,9 @@ def _build_compare_resources(detection, tonemap, input_name, track_name):
         min_panel_w = int(max(_sdr_w, _hdr_w)) + 8
 
     footer_font = ImageFont.truetype(
-        str(_ASSETS / "Inter_18pt-Medium.ttf"), 16)
+        str(_ASSETS / "GoogleSans_17pt-Medium.ttf"), 14)
     logo_raw = Image.open(_ASSETS / "proofpgs-icon-footer.png").convert("RGBA")
-    logo_h = 24
+    logo_h = 20
     logo_w = int(logo_raw.width * logo_h / logo_raw.height)
     logo = logo_raw.resize((logo_w, logo_h), Image.LANCZOS)
     footer_text = f"ProofPGS v{__version__}"
