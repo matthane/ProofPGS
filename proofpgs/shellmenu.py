@@ -16,7 +16,8 @@ _MODES = [
     ("02_compare",  "Compare (SDR && HDR side-by-side)", "compare",  False),
     ("03_hdr",      "Export as HDR (BT.2020+PQ)",               "hdr",      False),
     ("04_sdr",      "Export as SDR (BT.709)",                    "sdr",      False),
-    ("05_validate", "Validate (show track info only)", "validate", True),
+    ("05_validate", "Validate (show track info only, may be slow)", "validate", True),
+    ("06_validate_fast", "Validate fast (skips sparse tracks)", "validate-fast", False),
 ]
 
 

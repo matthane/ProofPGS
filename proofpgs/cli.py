@@ -38,12 +38,15 @@ def _main():
                              "for all supported file types")
     parser.add_argument("--uninstall", action="store_true",
                         help="Remove Windows Explorer context menu entries")
-    parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr", "validate"],
+    parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr",
+                                          "validate", "validate-fast"],
                         default="auto",
                         help="Output mode. auto=detect color space (default), "
                              "compare=SDR & HDR side-by-side, "
                              "hdr=BT.2020+PQ (UHD BD), sdr=BT.709 (BD), "
-                             "validate=show track info & detection only (no output)")
+                             "validate=show track info & detection only (no output), "
+                             "validate-fast=budgeted validation with option to "
+                             "fully validate remaining tracks")
     parser.add_argument("--tonemap", choices=["clip", "reinhard"], default="clip",
                         help="HDR->SDR tonemapping. clip=hard clip at 203 nits ref white "
                              "(best for subtitles), reinhard=soft roll-off. Default: clip")
@@ -91,7 +94,7 @@ def _main():
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop,
                                  threads=args.threads)
-        if args.mode != "validate":
+        if args.mode not in ("validate", "validate-fast"):
             print(f"\n{success('Done.')} {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,

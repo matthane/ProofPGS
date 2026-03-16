@@ -44,6 +44,22 @@ def select_tracks_interactive(tracks: list,
         return list(range(len(tracks)))
 
 
+def confirm_validate_bailed() -> bool:
+    """Ask whether to fully validate bailed (unanalyzed) tracks."""
+    print("Some tracks could not be analyzed within the time limit.")
+    print(f"  {bold('[v]')}      Validate remaining tracks (may take longer)")
+    print(f"  {bold('[Enter]')}  Skip and exit")
+    try:
+        choice = input("> ").strip().lower()
+    except EOFError:
+        print()
+        return False
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)
+    return choice == "v"
+
+
 def select_count_interactive() -> int | None:
     """Prompt the user for how many subtitles to process per track."""
     print("How many subtitles to process per track?")

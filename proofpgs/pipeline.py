@@ -14,7 +14,7 @@ from .ffmpeg import (
     extract_all_pgs_tracks, build_track_folder_name,
     extract_track_streaming, extract_analysis_samples,
 )
-from .interactive import select_tracks_interactive, select_count_interactive
+from .interactive import select_tracks_interactive, select_count_interactive, confirm_validate_bailed
 from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
 from .style import (
     info, warn, error, success, heading, dim, bold,
@@ -291,7 +291,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     det_str = format_detection(detection)
     print(f"  {info('Detected:')} {det_str}")
 
-    if mode == "validate":
+    if mode in ("validate", "validate-fast"):
         return 0
 
     if mode == "auto":
@@ -352,7 +352,18 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print(CURSOR_UP_CLEAR, end="", flush=True)
     has_bailed = _print_track_listing(tracks)
 
-    if mode == "validate":
+    if mode in ("validate", "validate-fast"):
+        if mode == "validate-fast" and has_bailed and sys.stdin.isatty():
+            if confirm_validate_bailed():
+                bailed_indices = [
+                    i for i, t in enumerate(tracks)
+                    if t.get("analysis_bailed")
+                ]
+                _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
+                                input_path, duration_s, preview_cache,
+                                budget=None)
+                print(CURSOR_UP_CLEAR, end="", flush=True)
+                _print_track_listing(tracks)
         return
 
     # === Phase 4: Track selection (with [v] validate for bailed tracks) ===
