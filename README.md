@@ -164,7 +164,7 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 ```
 proofpgs/
   assets/             # Bundled resources (fonts, icons)
-    Inter_18pt-Medium.ttf
+    GoogleSans_17pt-Medium.ttf
   __init__.py         # Public API exports
   __main__.py         # python -m proofpgs entry point
   cli.py              # Argument parsing and main()
@@ -178,5 +178,5 @@ proofpgs/
   pipeline.py         # High-level orchestration
   shellmenu.py        # Windows Explorer context menu integration
 LICENSES/
-  OFL.txt             # SIL Open Font License 1.1 (Inter font)
+  OFL.txt             # SIL Open Font License 1.1 (Google Sans font)
 ```
