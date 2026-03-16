@@ -10,7 +10,7 @@ from .parser import read_sup, ds_has_content
 from .renderer import process_display_sets
 from .detect import detect_from_palettes, format_detection
 from .ffmpeg import (
-    check_ffmpeg, probe_pgs_tracks,
+    check_ffmpeg, probe_pgs_tracks, probe_video_range,
     extract_all_pgs_tracks, build_track_folder_name,
     extract_track_streaming, extract_analysis_samples,
 )
@@ -21,7 +21,7 @@ from .interactive import (
 from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
 from .style import (
     info, warn, error, success, heading, dim, bold,
-    badge_hdr, badge_sdr, badge_compare, badge_unknown,
+    badge_hdr, badge_sdr, badge_compare, badge_unknown, badge_mismatch,
     CURSOR_UP_CLEAR,
 )
 
@@ -202,15 +202,20 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                 shutil.rmtree(temp_dir2, ignore_errors=True)
 
 
-def _print_track_listing(tracks):
+def _print_track_listing(tracks, video_range=None):
     """Print the track listing with analysis results.
+
+    *video_range* (``"hdr"``/``"sdr"``/``None``) is the dynamic range of
+    the container's video stream.  When a subtitle track's detected range
+    differs, a "Dynamic range mismatch" badge is appended.
 
     Returns True if any tracks were bailed (not analyzed).
     """
     has_bailed = False
 
     # --- Pass 1: build plain-text columns for width calculation ---
-    rows = []  # (index_col, stream_col, detail_col, badge_plain, badge_styled)
+    rows = []  # (index_col, stream_col, detail_col, badge_plain, badge_styled,
+               #  mismatch_styled)
 
     for ti, t in enumerate(tracks):
         index_col = f"[{ti}]"
@@ -245,8 +250,17 @@ def _print_track_listing(tracks):
                 badge_plain = ""
                 badge_styled = ""
 
+        # Mismatch badge: subtitle range differs from video stream range.
+        mismatch_styled = ""
+        det = t.get("detection", {})
+        if (video_range is not None
+                and not t.get("analysis_bailed")
+                and det.get("verdict") is not None
+                and det["verdict"] != video_range):
+            mismatch_styled = f"  {badge_mismatch('Dynamic range mismatch')}"
+
         rows.append((index_col, stream_col, detail_col,
-                     badge_plain, badge_styled))
+                     badge_plain, badge_styled, mismatch_styled))
 
     # --- Compute column widths ---
     idx_w    = max((len(r[0]) for r in rows), default=0)
@@ -255,12 +269,17 @@ def _print_track_listing(tracks):
 
     # --- Pass 2: print aligned ---
     print(f"{info('Found')} {bold(str(len(tracks)))} PGS subtitle track(s):")
-    for index_col, stream_col, detail_col, badge_plain, badge_styled in rows:
+    if video_range is not None:
+        range_label = video_range.upper()
+        range_styled = badge_hdr(range_label) if video_range == "hdr" else badge_sdr(range_label)
+        print(f"  {dim('Video stream:')} {range_styled}")
+    for (index_col, stream_col, detail_col,
+         badge_plain, badge_styled, mismatch_styled) in rows:
         idx_part = bold(index_col.ljust(idx_w))
         stream_part = dim(stream_col.ljust(stream_w))
         if badge_plain:
             detail_part = detail_col.ljust(detail_w)
-            print(f"  {idx_part}  {stream_part}  {detail_part}  {badge_styled}")
+            print(f"  {idx_part}  {stream_part}  {detail_part}  {badge_styled}{mismatch_styled}")
         else:
             print(f"  {idx_part}  {stream_part}  {detail_col}")
 
@@ -349,6 +368,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print(warn("No PGS subtitle tracks found."))
         return
 
+    video_range = probe_video_range(ffprobe_path, input_path)
+
     # === Phase 2: Single-pass analysis (target: <10s wallclock) ===
     preview_cache = {}  # ti -> list of display sets
     all_indices = list(range(len(tracks)))
@@ -364,7 +385,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     # === Phase 3: Display track listing ===
     # Clear the "Validating/Analyzing" status line now that results are ready.
     print(CURSOR_UP_CLEAR, end="", flush=True)
-    has_bailed = _print_track_listing(tracks)
+    has_bailed = _print_track_listing(tracks, video_range=video_range)
 
     if mode in ("validate", "validate-fast"):
         if mode == "validate-fast" and has_bailed and sys.stdin.isatty():
@@ -377,7 +398,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                                 input_path, duration_s, preview_cache,
                                 budget=None)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
-                _print_track_listing(tracks)
+                _print_track_listing(tracks, video_range=video_range)
         return
 
     # === Phase 4: Track selection (with [v] validate for bailed tracks) ===
@@ -406,7 +427,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                                 input_path, duration_s, preview_cache,
                                 budget=None)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
-                has_bailed = _print_track_listing(tracks)
+                has_bailed = _print_track_listing(tracks, video_range=video_range)
                 continue
             selected_indices = selection
             break

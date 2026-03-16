@@ -84,6 +84,76 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
     return tracks, duration_s, start_time_s
 
 
+# Transfer characteristics that indicate HDR or SDR.
+_HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+_SDR_TRANSFERS = {
+    "bt709", "smpte170m", "bt470m", "bt470bg",
+    "gamma22", "gamma28", "iec61966-2-1",
+}
+# Color primaries that indicate wide color gamut / HDR.
+_HDR_PRIMARIES = {"bt2020"}
+
+
+def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
+    """Detect the video stream's dynamic range from color metadata.
+
+    Probes video streams and examines the main video stream's
+    ``color_transfer`` field.  Falls back to ``color_primaries``
+    (BT.2020 → HDR) when transfer characteristics are absent, then
+    defaults to SDR — standard Blu-ray rips almost never carry explicit
+    color metadata, while HDR standards require signaling.
+
+    Attached pictures (cover art) are skipped.
+
+    Returns ``"hdr"``, ``"sdr"``, or ``None`` (no real video stream).
+    Advisory only — never raises on failure.
+    """
+    try:
+        result = subprocess.run(
+            [ffprobe_path, "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-select_streams", "v", input_path],
+            capture_output=True, text=True, encoding="utf-8", check=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+    try:
+        data = json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    # Filter out attached pictures (cover art, thumbnails).
+    streams = [
+        s for s in data.get("streams", [])
+        if not s.get("disposition", {}).get("attached_pic", 0)
+    ]
+    if not streams:
+        return None
+
+    # Prefer the default video stream; fall back to the first.
+    chosen = streams[0]
+    for s in streams:
+        if s.get("disposition", {}).get("default", 0):
+            chosen = s
+            break
+
+    # 1. Explicit transfer characteristics (strongest signal).
+    transfer = chosen.get("color_transfer", "")
+    if transfer in _HDR_TRANSFERS:
+        return "hdr"
+    if transfer in _SDR_TRANSFERS:
+        return "sdr"
+
+    # 2. Color primaries fallback (BT.2020 implies HDR/WCG).
+    primaries = chosen.get("color_primaries", "")
+    if primaries in _HDR_PRIMARIES:
+        return "hdr"
+
+    # 3. No HDR indicators — SDR is the default for video content.
+    #    SDR Blu-ray rips (H.264/1080p) almost never carry explicit
+    #    color metadata; HDR standards require signaling.
+    return "sdr"
+
 
 def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
                            tracks: list, temp_dir: str,

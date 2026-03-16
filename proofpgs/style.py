@@ -80,6 +80,9 @@ def badge_compare(text):
 def badge_unknown(text):
     return f"{_DIM}{text}{_RESET}"
 
+def badge_mismatch(text):
+    return f"{_WARN}{text}{_RESET}"
+
 
 # --- Cursor control (always active on TTY, silent when piped) ---
 _is_tty = sys.stdout.isatty()
