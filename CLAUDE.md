@@ -27,11 +27,12 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `color.py` | All colour-space math and palette LUT construction |
 | `detect.py` | SDR/HDR auto-detection via PQ plausibility analysis |
 | `parser.py` | PGS binary parsing, RLE decoding, streaming parser |
-| `renderer.py` | Converts display sets to PNG files |
+| `renderer.py` | Multi-threaded display set rendering and PNG output |
 | `ffmpeg.py` | ffprobe track discovery, streaming and batch extraction |
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
 | `constants.py` | PQ constants, segment type codes, file extensions, analysis budget (`Budget` class) |
+| `style.py` | Terminal styling helpers (colours, badges, cursor control) |
 | `assets/` | Bundled resources (fonts, icons) — accessed via `Path(__file__).resolve().parent / "assets"` |
 
 ## Bundled assets and licenses
@@ -59,18 +60,19 @@ Blu-ray SDR content is mastered for BT.1886 (gamma 2.4). PC monitors use sRGB (�
 The UHD BD reference white is 203 nits. Linear light is normalised by dividing by `203/10000 = 0.0203` before clipping or Reinhard tonemapping. This maps reference-white subtitles to sRGB 1.0.
 
 ### Track analysis budget (10s wallclock)
-When listing PGS tracks in a container, the analysis phase (subtitle count estimation + SDR/HDR detection) runs under a **10-second wallclock budget**. A single FFmpeg pass extracts samples from all tracks simultaneously (mid-file seek, `-frames:s` packet cap per track, `-flush_packets 1`). A watchdog thread kills FFmpeg when the budget expires. Tracks that received enough data are fully analyzed; tracks with too few display sets (sparse subtitles) are marked `analysis_bailed = True` and shown as `[not analyzed — too few samples]` in the listing. The user can press `[v]` to re-analyze bailed tracks without a time limit. `--mode validate` also runs without a budget and shows scan progress.
+When listing PGS tracks in a container, the analysis phase (SDR/HDR detection) runs under a **10-second wallclock budget**. A single FFmpeg pass extracts samples from all tracks simultaneously (mid-file seek, `-frames:s` packet cap per track, `-flush_packets 1`). Two mechanisms can terminate FFmpeg early: a deadline watchdog kills it when the budget expires, and a content-based watchdog kills it as soon as all tracks have conclusive SDR/HDR detection. Tracks that received enough data are fully analyzed; tracks with too few display sets (sparse subtitles) are marked `analysis_bailed = True` and shown as `[not analyzed — too few samples]` in the listing. The user can press `[v]` to re-analyze bailed tracks without a time limit. `--mode validate` runs without a budget and shows scan progress. `--mode validate-fast` runs under the normal budget but prompts to re-analyze sparse tracks afterward.
 
-The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track packet cap is `ANALYSIS_MAX_PACKETS` (default 125, ~25 display sets at ~5 segments/DS).
+The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track display-set cap is `ANALYSIS_MAX_DS` (default 125). For transport streams (M2TS/TS), this is multiplied by `TS_SEGMENTS_PER_DS` (default 5) since each PGS segment is a separate packet.
 
 ### Preview samples from the middle of the file
-Both the analysis extraction and the interactive preview (default 10 subtitles) extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits.
+Both the analysis extraction and streaming extraction extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits. The interactive count prompt defaults to using cached analysis samples (no additional extraction needed), but the user can request a custom count or all subtitles.
 
-### Two extraction strategies
+### Three extraction strategies
 
 | Situation | Strategy |
 |---|---|
-| `--first N` or interactive limit | Streaming via pipe — FFmpeg killed once N display sets collected. No temp files. |
+| Interactive default (cached) | Reuses display sets already collected during analysis. No additional FFmpeg extraction. |
+| `--first N` or custom interactive count | Streaming via pipe — FFmpeg killed once N display sets collected. No temp files. Reuses analysis cache if it already has enough content. |
 | `--tracks all` (no limit) | Batch — single FFmpeg pass extracts all selected tracks to temp `.sup` files, then decoded sequentially. |
 
 ### SDR/HDR auto-detection via PQ plausibility analysis
