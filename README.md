@@ -32,7 +32,7 @@ That's it. ProofPGS will:
 1. Detect all PGS subtitle tracks in the file
 2. Auto-detect whether each track is SDR or HDR (per-track color space detection)
 3. Prompt you to pick which tracks to process (with an option to validate sparse tracks)
-4. Prompt you for how many subtitles to decode (defaults to 10 for a fast preview)
+4. Prompt you for how many subtitles to decode (defaults to cached analysis samples for instant output)
 5. Decode using the correct color pipeline and save PNGs to a `pgs_output/` folder next to the input file
 
 Works the same way with `.sup`, `.m2ts`, `.ts`, `.mp4`, and other container formats.
