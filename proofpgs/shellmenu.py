@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
+from .style import error, success, dim
 
 _MENU_NAME = "ProofPGS"
 _SUBMENU_KEY = "ProofPGS.SubMenu"
@@ -110,7 +111,7 @@ def _clean_empty_parents(root, subkey: str):
 def install():
     """Register Windows Explorer context menu entries for ProofPGS."""
     if sys.platform != "win32":
-        print("[error] Context menu integration is only available on Windows.",
+        print(f"{error('[error]')} Context menu integration is only available on Windows.",
               file=sys.stderr)
         sys.exit(1)
 
@@ -118,7 +119,7 @@ def install():
 
     python_exe = sys.executable
     if not python_exe:
-        print("[error] Could not determine Python executable path.",
+        print(f"{error('[error]')} Could not determine Python executable path.",
               file=sys.stderr)
         sys.exit(1)
 
@@ -154,23 +155,23 @@ def install():
     _notify_shell()
 
     ext_list = " ".join(extensions)
-    print(f"Registered context menu for {len(extensions)} file types:")
+    print(f"{success('Registered')} context menu for {len(extensions)} file types:")
     print(f"  {ext_list}")
     print()
     print("Right-click any of these file types to see the ProofPGS submenu:")
     for _, label, _, _ in _MODES:
         print(f"  - {label}")
     print()
-    print("Note: On Windows 11, right-click and choose 'Show more options' "
-          "to see the submenu.")
-    print(f"Python: {python_exe}")
-    print(f"Project: {project_dir}")
+    print(dim("Note: On Windows 11, right-click and choose 'Show more options' "
+              "to see the submenu."))
+    print(dim(f"Python: {python_exe}"))
+    print(dim(f"Project: {project_dir}"))
 
 
 def uninstall():
     """Remove all Windows Explorer context menu entries for ProofPGS."""
     if sys.platform != "win32":
-        print("[error] Context menu integration is only available on Windows.",
+        print(f"{error('[error]')} Context menu integration is only available on Windows.",
               file=sys.stderr)
         sys.exit(1)
 
@@ -197,6 +198,6 @@ def uninstall():
     _notify_shell()
 
     if removed:
-        print(f"Removed Windows Explorer context menu entries for ProofPGS.")
+        print(f"{success('Removed')} Windows Explorer context menu entries for ProofPGS.")
     else:
         print("No ProofPGS context menu entries found.")

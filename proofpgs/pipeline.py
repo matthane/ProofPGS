@@ -16,6 +16,11 @@ from .ffmpeg import (
 )
 from .interactive import select_tracks_interactive, select_count_interactive
 from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
+from .style import (
+    info, warn, error, success, heading, dim, bold,
+    badge_hdr, badge_sdr, badge_compare, badge_unknown,
+    CURSOR_UP_CLEAR,
+)
 
 
 
@@ -99,7 +104,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
         max_packets = ANALYSIS_MAX_DS
 
     label = "Validating" if budget is None else "Analyzing"
-    print(f"  {label} {len(extract_tracks)} PGS track(s)...")
+    print(f"  {info(label)} {len(extract_tracks)} PGS track(s)...")
 
     # Content-based watchdog: kill FFmpeg as soon as all tracks have
     # conclusive detection.  In budgeted mode the deadline acts as a
@@ -201,36 +206,65 @@ def _print_track_listing(tracks):
     """
     has_bailed = False
 
-    print(f"Found {len(tracks)} PGS subtitle track(s):")
+    # --- Pass 1: build plain-text columns for width calculation ---
+    rows = []  # (index_col, stream_col, detail_col, badge_plain, badge_styled)
+
     for ti, t in enumerate(tracks):
+        index_col = f"[{ti}]"
+        stream_col = f"stream {t['index']}"
+
+        parts = [t["language"]]
+        if t["title"]:
+            parts.append(f'"{t["title"]}"')
         flags = []
         if t["forced"]:  flags.append("forced")
         if t["default"]: flags.append("default")
-        flag_str = f"  [{', '.join(flags)}]" if flags else ""
-        title_str = f'  "{t["title"]}"' if t["title"] else ""
+        if flags:
+            parts.append(f"[{', '.join(flags)}]")
+        detail_col = "  ".join(parts)
 
         if t.get("analysis_bailed"):
             has_bailed = True
-            extra = "  [not analyzed — too few samples] *"
-            print(f"  [{ti}] stream {t['index']}: "
-                  f"{t['language']}{title_str}{flag_str}{extra}")
-            continue
-
-        # Detection
-        det = t.get("detection", {})
-        if det.get("verdict"):
-            det_str = f"  [Mastered for {det['verdict'].upper()}]"
+            badge_plain = "[not analyzed — too few samples] *"
+            badge_styled = badge_unknown(badge_plain)
         else:
-            det_str = ""
+            det = t.get("detection", {})
+            if det.get("verdict") == "hdr":
+                badge_plain = "Mastered for HDR"
+                badge_styled = badge_hdr(badge_plain)
+            elif det.get("verdict") == "sdr":
+                badge_plain = "Mastered for SDR"
+                badge_styled = badge_sdr(badge_plain)
+            elif det.get("verdict"):
+                badge_plain = f"Mastered for {det['verdict'].upper()}"
+                badge_styled = badge_plain
+            else:
+                badge_plain = ""
+                badge_styled = ""
 
-        print(f"  [{ti}] stream {t['index']}: "
-              f"{t['language']}{title_str}{flag_str}"
-              f"{det_str}")
+        rows.append((index_col, stream_col, detail_col,
+                     badge_plain, badge_styled))
+
+    # --- Compute column widths ---
+    idx_w    = max((len(r[0]) for r in rows), default=0)
+    stream_w = max((len(r[1]) for r in rows), default=0)
+    detail_w = max((len(r[2]) for r in rows), default=0)
+
+    # --- Pass 2: print aligned ---
+    print(f"{info('Found')} {bold(str(len(tracks)))} PGS subtitle track(s):")
+    for index_col, stream_col, detail_col, badge_plain, badge_styled in rows:
+        idx_part = bold(index_col.ljust(idx_w))
+        stream_part = dim(stream_col.ljust(stream_w))
+        if badge_plain:
+            detail_part = detail_col.ljust(detail_w)
+            print(f"  {idx_part}  {stream_part}  {detail_part}  {badge_styled}")
+        else:
+            print(f"  {idx_part}  {stream_part}  {detail_col}")
 
     if has_bailed:
         print()
-        print("  * Very sparse tracks with few subtitles may require reading")
-        print("    deep into the file and take longer.")
+        print(dim("  * Very sparse tracks with few subtitles may require reading"))
+        print(dim("    deep into the file and take longer."))
     print()
 
     return has_bailed
@@ -250,26 +284,26 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     display_sets = read_sup(sup_path)
     _adjust_pts_offset(display_sets, start_time_s)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
-    print(f"  Found {total} subtitle display sets ({len(display_sets)} total incl. clears).")
+    print(f"  {info('Found')} {bold(str(total))} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
     # Color space detection
     detection = detect_from_palettes(display_sets)
     det_str = format_detection(detection)
-    print(f"  Detected: {det_str}")
+    print(f"  {info('Detected:')} {det_str}")
 
     if mode == "validate":
         return 0
 
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
-        print(f"  Mode: {mode.upper()} (auto-detected)  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+        print(f"  {info('Mode:')} {bold(mode.upper())} {dim('(auto-detected)')}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
     else:
         if (detection["verdict"] is not None
                 and detection["verdict"] != mode
                 and mode in ("hdr", "sdr")):
-            print(f"  WARNING: --mode {mode} specified but {detection['verdict'].upper()} "
+            print(f"  {warn('WARNING:')} --mode {mode} specified but {detection['verdict'].upper()} "
                   f"content detected. Subtitles may appear incorrect.")
-        print(f"  Mode: {mode.upper()}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+        print(f"  {info('Mode:')} {bold(mode.upper())}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
@@ -294,11 +328,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
     """
     ffmpeg_path, ffprobe_path = check_ffmpeg()
 
-    print(f"Probing: {input_path}")
+    print(f"{info('Probing:')} {input_path}")
     tracks, duration_s, start_time_s = probe_pgs_tracks(ffprobe_path, input_path)
 
     if not tracks:
-        print("No PGS subtitle tracks found.")
+        print(warn("No PGS subtitle tracks found."))
         return
 
     # === Phase 2: Single-pass analysis (target: <10s wallclock) ===
@@ -315,7 +349,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     # === Phase 3: Display track listing ===
     # Clear the "Validating/Analyzing" status line now that results are ready.
-    print("\033[A\033[K", end="", flush=True)
+    print(CURSOR_UP_CLEAR, end="", flush=True)
     has_bailed = _print_track_listing(tracks)
 
     if mode == "validate":
@@ -332,7 +366,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
             except ValueError:
                 selected_indices = list(range(len(tracks)))
             if not selected_indices:
-                print("  No valid track numbers. Processing all tracks.")
+                print(f"  {warn('No valid track numbers.')} Processing all tracks.")
                 selected_indices = list(range(len(tracks)))
     elif sys.stdin.isatty():
         while True:
@@ -346,7 +380,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
                                 input_path, duration_s, preview_cache,
                                 budget=None)
-                print("\033[A\033[K", end="", flush=True)
+                print(CURSOR_UP_CLEAR, end="", flush=True)
                 has_bailed = _print_track_listing(tracks)
                 continue
             selected_indices = selection
@@ -385,7 +419,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         for ti in selected_indices:
             det = tracks[ti].get("detection", {})
             if det.get("verdict") and det["verdict"] != mode:
-                print(f"  WARNING: --mode {mode} specified but track {ti} "
+                print(f"  {warn('WARNING:')} --mode {mode} specified but track {ti} "
                       f"detected as {det['verdict'].upper()}. "
                       f"Subtitles may appear incorrect.")
     else:
@@ -395,8 +429,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print()
     track_desc = ", ".join(str(i) for i in selected_indices)
     count_desc = str(max_ds) if max_ds is not None else "all"
-    print(f"Processing track(s) [{track_desc}], {count_desc} subtitle(s) each.")
-    print(f"Mode: {mode_note}  |  Tonemap: {tonemap}  |  Output: {out_dir}/")
+    print(f"{info('Processing')} track(s) [{track_desc}], {count_desc} subtitle(s) each.")
+    print(f"{info('Mode:')} {bold(mode_note)}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
     print()
 
     # === Phase 5: Extraction & rendering ===
@@ -415,8 +449,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             track_out = os.path.join(out_dir, folder_name)
 
             title_str = f' "{track["title"]}"' if track["title"] else ""
-            print(f"=== Track {ti}: {track['language']}{title_str} "
-                  f"(stream {track['index']}) ===")
+            print(heading(f"=== Track {ti}: {track['language']}{title_str} "
+                          f"(stream {track['index']}) ==="))
 
             # Reuse cached analysis data when it has enough content.
             cached = preview_cache.get(ti)
@@ -431,7 +465,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         seek_s=mid_seek,
                     )
                 except Exception as e:
-                    print(f"  [error] Streaming extraction failed: {e}")
+                    print(f"  {error('[error]')} Streaming extraction failed: {e}")
                     continue
 
             if not display_sets:
@@ -440,7 +474,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
             _adjust_pts_offset(display_sets, start_time_s)
             content_total = sum(1 for d in display_sets if ds_has_content(d))
-            print(f"  Collected {content_total} subtitle(s).")
+            print(f"  Collected {bold(str(content_total))} subtitle(s).")
             track_label = f"Stream {track['index']}: {track['language']}"
             if track["title"]:
                 track_label += f' "{track["title"]}"'
@@ -467,7 +501,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     temp_dir, duration_s
                 )
             except subprocess.CalledProcessError as e:
-                print(f"[error] ffmpeg extraction failed: {e}")
+                print(f"{error('[error]')} ffmpeg extraction failed: {e}")
                 return
 
             for enum_i, ti in enumerate(selected_indices):
@@ -477,11 +511,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 temp_sup = sup_paths[enum_i]
 
                 title_str = f' "{track["title"]}"' if track["title"] else ""
-                print(f"=== Track {ti}: {track['language']}{title_str} "
-                      f"(stream {track['index']}) ===")
+                print(heading(f"=== Track {ti}: {track['language']}{title_str} "
+                              f"(stream {track['index']}) ==="))
 
                 if not os.path.isfile(temp_sup):
-                    print(f"  [warn] Extraction produced no output "
+                    print(f"  {warn('[warn]')} Extraction produced no output "
                           f"for stream {track['index']}")
                     continue
 
@@ -501,5 +535,5 @@ def process_container(input_path: str, out_dir: str, mode: str,
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    print(f"Done. {total_saved} total images across "
+    print(f"{success('Done.')} {total_saved} total images across "
           f"{len(selected_indices)} track(s) in {out_dir}/")

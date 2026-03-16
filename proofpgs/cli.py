@@ -6,6 +6,7 @@ import sys
 
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
 from .pipeline import process_sup_file, process_container
+from .style import dim, error, info, success, warn
 
 
 def main():
@@ -19,7 +20,7 @@ def main():
     try:
         _main()
     except KeyboardInterrupt:
-        print("\nInterrupted.")
+        print(f"\n{dim('Interrupted.')}")
         sys.exit(130)
 
 
@@ -76,7 +77,7 @@ def _main():
         sys.exit(1)
 
     if not os.path.isfile(args.input_file):
-        print(f"[error] File not found: {args.input_file}", file=sys.stderr)
+        print(f"{error('[error]')} File not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
 
     if args.out is None:
@@ -86,18 +87,18 @@ def _main():
     ext = os.path.splitext(args.input_file)[1].lower()
 
     if ext in SUP_EXTENSIONS:
-        print(f"Reading: {args.input_file}")
+        print(f"{info('Reading:')} {args.input_file}")
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop,
                                  threads=args.threads)
         if args.mode != "validate":
-            print(f"\nDone. {saved} images written to {args.out}/")
+            print(f"\n{success('Done.')} {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
                           tracks_arg=args.tracks, threads=args.threads)
     else:
-        print(f"[warn] Unrecognised extension '{ext}'. "
+        print(f"{warn('[warn]')} Unrecognised extension '{ext}'. "
               f"Attempting as container file...")
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,

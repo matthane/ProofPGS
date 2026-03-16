@@ -5,6 +5,7 @@ import struct
 import numpy as np
 
 from .constants import SEG_END, SEG_ODS, format_time
+from .style import warn
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,7 @@ def read_sup(path: str) -> list:
 
     while pos + 13 <= len(data):
         if data[pos:pos + 2] != b"PG":
-            print(f"[warn] Bad magic at {pos:#010x}, stopping.")
+            print(f"{warn('[warn]')} Bad magic at {pos:#010x}, stopping.")
             break
 
         pts      = struct.unpack(">I", data[pos + 2:pos + 6])[0]
@@ -87,7 +88,7 @@ def read_sup_streaming(stream, max_ds: int = None) -> list:
             break
 
         if header[0:2] != b"PG":
-            print(f"[warn] Bad magic in stream, stopping.")
+            print(f"{warn('[warn]')} Bad magic in stream, stopping.")
             break
 
         pts      = struct.unpack(">I", header[2:6])[0]

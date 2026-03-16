@@ -10,6 +10,7 @@ import time
 
 from .constants import format_time, ANALYSIS_MAX_DS
 from .parser import read_sup_streaming
+from .style import error, info, CLEAR_LINE
 
 
 def check_ffmpeg():
@@ -20,7 +21,7 @@ def check_ffmpeg():
         missing = []
         if not ffmpeg:  missing.append("ffmpeg")
         if not ffprobe: missing.append("ffprobe")
-        print(f"[error] {', '.join(missing)} not found on PATH.\n"
+        print(f"{error('[error]')} {', '.join(missing)} not found on PATH.\n"
               f"        Install ffmpeg (https://ffmpeg.org) to process container files.",
               file=sys.stderr)
         sys.exit(1)
@@ -46,13 +47,13 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
             capture_output=True, text=True, encoding="utf-8", check=True,
         )
     except subprocess.CalledProcessError as e:
-        print(f"[error] ffprobe failed on {input_path}: {e.stderr.strip()}")
+        print(f"{error('[error]')} ffprobe failed on {input_path}: {e.stderr.strip()}")
         return [], None, None
 
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print(f"[error] Could not parse ffprobe output for {input_path}.")
+        print(f"{error('[error]')} Could not parse ffprobe output for {input_path}.")
         return [], None, None
 
     duration_s = None
@@ -100,7 +101,7 @@ def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
         cmd += ["-map", f"0:{track['index']}", "-c", "copy", sup_path]
         sup_paths[ti] = sup_path
 
-    print(f"Extracting {len(tracks)} PGS track(s)...")
+    print(f"{info('Extracting')} {len(tracks)} PGS track(s)...")
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
     try:
@@ -232,7 +233,7 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                         f"({elapsed:.1f}s elapsed)",
                         end="", flush=True,
                     )
-            print("\r\033[K", end="", flush=True)  # clear progress line
+            print(f"\r{CLEAR_LINE}", end="", flush=True)  # clear progress line
         proc.wait()
     finally:
         cancel.set()

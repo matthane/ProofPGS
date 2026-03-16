@@ -9,6 +9,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from .style import warn, dim, info
+
 _ASSETS = Path(__file__).resolve().parent / "assets"
 
 _DEFAULT_MAX_THREADS = 8
@@ -108,7 +110,7 @@ def render_ds(ds: list, mode: str, tonemap: str) -> tuple:
         try:
             indices = decode_rle(obj["rle"], w, h)
         except Exception as e:
-            print(f"  [warn] RLE decode error obj {obj_id}: {e}")
+            print(f"  {warn('[warn]')} RLE decode error obj {obj_id}: {e}")
             continue
 
         rgba    = lut[indices]                          # (h, w, 4) uint8
@@ -439,7 +441,7 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             idx, pts_ms, fname = _worker(item)
             if fname is not None:
                 saved += 1
-                print(f"  [{idx:04d}]  {pts_ms / 1000.0:8.3f}s  ->  {fname}")
+                print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
         return saved
 
     # --- Parallel path with ordered output ---
@@ -467,7 +469,7 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
                 idx, pts_ms, fname = results_buf.pop(next_to_print)
                 if fname is not None:
                     saved += 1
-                    print(f"  [{idx:04d}]  {pts_ms / 1000.0:8.3f}s  ->  {fname}")
+                    print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
                 next_to_print += 1
 
     return saved
