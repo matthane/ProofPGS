@@ -9,6 +9,13 @@ from .pipeline import process_sup_file, process_container
 
 
 def main():
+    # Windows consoles default to a legacy codepage (e.g. cp1252) that cannot
+    # encode CJK characters.  Reconfigure to UTF-8 so track titles with
+    # non-Latin text print correctly.
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     try:
         _main()
     except KeyboardInterrupt:

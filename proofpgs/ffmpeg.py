@@ -43,7 +43,7 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
             [ffprobe_path, "-v", "quiet", "-print_format", "json",
              "-show_streams", "-select_streams", "s",
              "-show_format", input_path],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", check=True,
         )
     except subprocess.CalledProcessError as e:
         print(f"[error] ffprobe failed on {input_path}: {e.stderr.strip()}")
