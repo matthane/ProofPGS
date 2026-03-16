@@ -189,7 +189,7 @@ def _render_x_icon(r, color):
 
 def _build_compare_resources(detection, tonemap, input_name, track_name):
     """Build the immutable resource bundle used by compare-mode workers."""
-    label_font = ImageFont.truetype(str(_ASSETS / "GoogleSans_17pt-Medium.ttf"), 14)
+    label_font = ImageFont.truetype(str(_ASSETS / "Sora-Medium.ttf"), 14)
 
     detected_side = None
     if detection and detection.get("verdict"):
@@ -205,7 +205,7 @@ def _build_compare_resources(detection, tonemap, input_name, track_name):
     gap = 12
 
     _sdr_w = label_font.getlength("BT.709 (SDR DECODE)")
-    _hdr_w = label_font.getlength(f"BT.2020+PQ \u2192 BT.709 ({tonemap.upper()})")
+    _hdr_w = label_font.getlength(f"BT.2020+PQ -> BT.709 ({tonemap.upper()})")
     if detected_side:
         check_icon = _render_check_icon(icon_r, green)
         x_icon     = _render_x_icon(icon_r, red)
@@ -216,8 +216,7 @@ def _build_compare_resources(detection, tonemap, input_name, track_name):
     else:
         min_panel_w = int(max(_sdr_w, _hdr_w)) + 8
 
-    footer_font = ImageFont.truetype(
-        str(_ASSETS / "GoogleSans_17pt-Medium.ttf"), 14)
+    footer_font = ImageFont.truetype(str(_ASSETS / "Sora-Regular.ttf"), 14)
     logo_raw = Image.open(_ASSETS / "proofpgs-icon-footer.png").convert("RGBA")
     logo_h = 20
     logo_w = int(logo_raw.width * logo_h / logo_raw.height)
@@ -315,7 +314,7 @@ def _render_and_save_compare(ds, i, out_dir, nocrop, res):
     hdr_x = pad + w + gutter
 
     sdr_label = "BT.709 (SDR DECODE)"
-    hdr_label = f"BT.2020+PQ \u2192 BT.709 ({res.tonemap.upper()})"
+    hdr_label = f"BT.2020+PQ -> BT.709 ({res.tonemap.upper()})"
     text_y = pad + 6
     draw.text((sdr_x + 4, text_y), sdr_label,
               fill=(180, 180, 180, 255), font=res.label_font)

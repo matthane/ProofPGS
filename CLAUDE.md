@@ -40,7 +40,8 @@ There is no test suite. Validation is done by visual inspection of the output PN
 
 | Asset | License | File |
 |---|---|---|
-| Google Sans 17pt Medium (`assets/GoogleSans_17pt-Medium.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
+| Sora Medium (`assets/Sora-Medium.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
+| Sora Regular (`assets/Sora-Regular.ttf`) | SIL Open Font License 1.1 | `LICENSES/OFL.txt` |
 
 ## Key technical decisions
 
