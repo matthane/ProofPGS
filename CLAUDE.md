@@ -65,11 +65,6 @@ The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). 
 ### Preview samples from the middle of the file
 Both the analysis extraction and the interactive preview (default 10 subtitles) extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits.
 
-### Subtitle counts: exact vs estimated
-- **MKV**: `NUMBER_OF_FRAMES` tag provides an exact display-set count for free.
-- **MP4 / other**: `nb_frames` stream field used if available.
-- **Remaining**: estimated from the analysis extraction's PTS range — the time span between first and last gathered display set is extrapolated to the full container duration. Shown as `(~N subtitles est.)`.
-
 ### Two extraction strategies
 
 | Situation | Strategy |

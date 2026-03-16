@@ -32,7 +32,7 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
 
     Returns (tracks, duration_s, start_time_s) where tracks is a list of
     dicts with keys:
-      index, language, title, forced, default, num_frames
+      index, language, title, forced, default
     duration_s is the container duration in seconds (or None), and
     start_time_s is the container's initial PTS offset in seconds (or None).
     Blu-ray M2TS streams typically have a non-zero start_time; MKV starts
@@ -73,32 +73,12 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
             continue
         tags = s.get("tags", {})
         disp = s.get("disposition", {})
-        # NUMBER_OF_FRAMES is a container-level tag (MKV stats) — cheap,
-        # no full-file scan needed.  Not present in all containers.
-        num_frames = None
-        for key in ("NUMBER_OF_FRAMES", "NUMBER_OF_FRAMES-eng"):
-            if key in tags:
-                try:
-                    num_frames = int(tags[key])
-                except (ValueError, TypeError):
-                    pass
-                break
-        # Fallback: some containers (e.g. MP4) populate nb_frames at the
-        # stream level for free — no extra probe needed.
-        if num_frames is None:
-            nb = s.get("nb_frames")
-            if nb and nb != "N/A":
-                try:
-                    num_frames = int(nb)
-                except (ValueError, TypeError):
-                    pass
         tracks.append({
             "index":      s["index"],
             "language":   tags.get("language", "und"),
             "title":      tags.get("title", ""),
             "forced":     bool(disp.get("forced", 0)),
             "default":    bool(disp.get("default", 0)),
-            "num_frames": num_frames,
         })
     return tracks, duration_s, start_time_s
 

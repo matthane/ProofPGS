@@ -17,8 +17,6 @@ from .ffmpeg import (
 from .interactive import select_tracks_interactive, select_count_interactive
 from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
 
-# Tracks with fewer display sets per minute than this are flagged sparse.
-_SPARSE_DS_PER_MIN = 1.0
 
 
 def _check_all_detected(paths):
@@ -75,10 +73,10 @@ def _resolve_auto_mode(detection: dict) -> str:
 def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                     duration_s, preview_cache, budget=None):
     """Single-pass analysis: extract samples for all requested tracks at
-    once, then run detection and count estimation on each.
+    once, then run detection on each.
 
     Updates each track dict in-place with:
-      detection, num_frames, sparse, analysis_bailed
+      detection, analysis_bailed
     Caches extracted display sets in *preview_cache*.
     """
     if not track_indices:
@@ -128,7 +126,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             else:
                 ds = []
 
-            # Cap to ANALYSIS_MAX_DS display sets so estimates are
+            # Cap to ANALYSIS_MAX_DS display sets so sample sizes are
             # consistent across container formats.  For MKV, -frames:s
             # already limits to this many DS.  For M2TS, the scaled
             # packet cap may yield slightly more DS (clear DS have
@@ -139,23 +137,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             preview_cache[ti] = ds
             content_count = sum(1 for d in ds if ds_has_content(d))
 
-            # --- Subtitle count estimation ---
-            # Always use PTS extrapolation so estimates are consistent
-            # across container formats (MKV, M2TS, MP4, etc.).
-            if content_count > 0 and not is_short and has_duration:
-                first_pts = ds[0][0]["pts"] / 90_000.0
-                last_pts = ds[-1][0]["pts"] / 90_000.0
-                pts_span = last_pts - first_pts
-                if pts_span > 0:
-                    t["num_frames"] = round(
-                        content_count * (duration_s / pts_span)
-                    )
-                else:
-                    # All DS at same PTS — use raw count.
-                    t["num_frames"] = content_count
-            elif content_count > 0:
-                t["num_frames"] = content_count
-
             # --- Color space detection ---
             if ds:
                 t["detection"] = detect_from_palettes(ds)
@@ -165,15 +146,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                     "max_y": 0, "max_achromatic_y": None,
                     "max_pq_channel": 0, "num_palettes": 0,
                 }
-
-            # --- Sparsity ---
-            nf = t["num_frames"]
-            if nf is not None and has_duration:
-                t["sparse"] = nf / (duration_s / 60.0) < _SPARSE_DS_PER_MIN
-            elif t["forced"]:
-                t["sparse"] = True
-            else:
-                t["sparse"] = False
 
             # --- Bail-out ---
             t["analysis_bailed"] = (
@@ -210,15 +182,13 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                         fallback = detect_from_palettes(ds)
                         if fallback["verdict"] is not None:
                             t["detection"] = fallback
-                        # Update cache / counts if we now have data
-                        # for a previously-bailed track.
+                        # Update cache if we now have data for a
+                        # previously-bailed track.
                         content_count = sum(
                             1 for d in ds if ds_has_content(d)
                         )
                         if content_count > 0:
                             preview_cache[ti] = ds
-                            if t["num_frames"] is None:
-                                t["num_frames"] = content_count
                             t["analysis_bailed"] = False
             finally:
                 shutil.rmtree(temp_dir2, ignore_errors=True)
@@ -229,7 +199,6 @@ def _print_track_listing(tracks):
 
     Returns True if any tracks were bailed (not analyzed).
     """
-    has_sparse = False
     has_bailed = False
 
     print(f"Found {len(tracks)} PGS subtitle track(s):")
@@ -242,21 +211,10 @@ def _print_track_listing(tracks):
 
         if t.get("analysis_bailed"):
             has_bailed = True
-            extra = "  [not analyzed — too few samples]"
+            extra = "  [not analyzed — too few samples] *"
             print(f"  [{ti}] stream {t['index']}: "
                   f"{t['language']}{title_str}{flag_str}{extra}")
             continue
-
-        # Subtitle count
-        if t["num_frames"] is not None:
-            n = t['num_frames']
-            if n > 100:
-                n = n // 100 * 100
-            elif n > 10:
-                n = n // 10 * 10
-            count_str = f"  (~{n} subtitles)"
-        else:
-            count_str = ""
 
         # Detection
         det = t.get("detection", {})
@@ -265,21 +223,14 @@ def _print_track_listing(tracks):
         else:
             det_str = ""
 
-        # Sparse warning
-        slow_warn = ""
-        if t.get("sparse"):
-            slow_warn = "  ** sparse — may be slow"
-            has_sparse = True
-
         print(f"  [{ti}] stream {t['index']}: "
-              f"{t['language']}{title_str}{flag_str}{count_str}"
-              f"{det_str}{slow_warn}")
+              f"{t['language']}{title_str}{flag_str}"
+              f"{det_str}")
 
-    if has_sparse:
+    if has_bailed:
         print()
-        print("  Note: Tracks marked 'sparse' contain very few subtitles")
-        print("  spread across the movie. Extracting them requires reading")
-        print("  much further into the file and will be significantly slower.")
+        print("  * Very sparse tracks with few subtitles may require reading")
+        print("    deep into the file and take longer.")
     print()
 
     return has_bailed
@@ -464,10 +415,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             track_out = os.path.join(out_dir, folder_name)
 
             title_str = f' "{track["title"]}"' if track["title"] else ""
-            sparse_str = ("  [sparse — may need to read far into file]"
-                          if track.get("sparse") else "")
             print(f"=== Track {ti}: {track['language']}{title_str} "
-                  f"(stream {track['index']}) ==={sparse_str}")
+                  f"(stream {track['index']}) ===")
 
             # Reuse cached analysis data when it has enough content.
             cached = preview_cache.get(ti)
