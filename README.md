@@ -58,13 +58,14 @@ python -m proofpgs movie.mkv --out ./my_output
 
 ### Output modes
 
-ProofPGS has five output modes:
+ProofPGS has six output modes:
 
 - **`auto`** (default) — Automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes each track with the correct pipeline independently. A container with mixed SDR and HDR tracks will process each track using its own detected color space. Falls back to `compare` for any individual track where detection is inconclusive.
 - **`compare`** — For delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
 - **`hdr`** — Direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
 - **`sdr`** — Direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
 - **`validate`** — Analyzes all tracks without a time limit (with scan progress) and displays track information and SDR/HDR detection results without producing any output. Useful for thoroughly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, including sparse tracks that may be skipped during normal interactive analysis.
+- **`validate-fast`** — Runs the same analysis as `validate` but under the normal 10-second wallclock budget. Sparse tracks that can't be analyzed in time are flagged, and you're prompted to re-analyze them without a time limit if desired. Useful for a quick check when a full unbounded scan isn't needed.
 
 ```bash
 # Auto-detect color space and decode accordingly (default):
@@ -81,18 +82,22 @@ python -m proofpgs input.sup --mode sdr
 
 # Show track info and detection only (no output):
 python -m proofpgs movie.mkv --mode validate
+
+# Quick validation under 10s budget (prompts to re-analyze sparse tracks):
+python -m proofpgs movie.mkv --mode validate-fast
 ```
 
 ## Options
 
 | Option | Values | Default | Description |
 |---|---|---|---|
-| `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate` | `auto` | `auto` detects color space per-track and decodes each track independently with the correct pipeline. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). |
+| `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate`, `validate-fast` | `auto` | `auto` detects color space per-track and decodes each track independently with the correct pipeline. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). `validate-fast` same as validate but under the 10s analysis budget with option to re-analyze sparse tracks. |
 | `--tonemap` | `clip`, `reinhard` | `clip` | HDR-to-SDR tonemapping strategy. `clip` hard-clips at 203 nits reference white (best for subtitles). `reinhard` applies a soft roll-off. |
 | `--out` | path | `pgs_output/` next to input file | Output directory. |
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
 | `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
+| `--threads` | integer | auto (up to 8) | Number of parallel rendering threads. |
 | `--install` | flag | — | Register Windows Explorer context menu entries for all supported file types. |
 | `--uninstall` | flag | — | Remove Windows Explorer context menu entries. |
 
@@ -153,18 +158,21 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ## Performance
 
-**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks in a single FFmpeg pass under a 10-second wallclock budget. It seeks to the middle of the file for representative content and extracts samples from all tracks simultaneously. Tracks that receive enough data get a subtitle count estimate and SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit.
+**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks in a single FFmpeg pass under a 10-second wallclock budget. It seeks to the middle of the file for representative content and extracts samples from all tracks simultaneously. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates FFmpeg early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
 
-**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), FFmpeg pipes each track directly to the parser and is terminated as soon as enough subtitles are collected. No temp files are created. The default of 10 samples from the **middle of the file** for representative content.
+**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), FFmpeg pipes each track directly to the parser and is terminated as soon as enough subtitles are collected. No temp files are created. Samples are taken from the **middle of the file** for representative content. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
 
-**Batch extraction:** When processing all subtitles, a single FFmpeg pass extracts all selected tracks to temporary files, then each is decoded in turn.
+**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), a single FFmpeg pass extracts all selected tracks to temporary files, then each is decoded in turn.
+
+**Multi-threaded rendering:** PNG rendering uses multiple threads by default (auto-detected, up to 8). Override with `--threads`.
 
 ## Project Structure
 
 ```
 proofpgs/
   assets/             # Bundled resources (fonts, icons)
-    GoogleSans_17pt-Medium.ttf
+    Sora-Medium.ttf
+    Sora-Regular.ttf
   __init__.py         # Public API exports
   __main__.py         # python -m proofpgs entry point
   cli.py              # Argument parsing and main()
@@ -177,6 +185,7 @@ proofpgs/
   interactive.py      # Interactive track and count selection
   pipeline.py         # High-level orchestration
   shellmenu.py        # Windows Explorer context menu integration
+  style.py            # Terminal styling and color output
 LICENSES/
-  OFL.txt             # SIL Open Font License 1.1 (Google Sans font)
+  OFL.txt             # SIL Open Font License 1.1 (Sora font)
 ```
