@@ -93,7 +93,8 @@ def _main():
         print(f"{info('Reading:')} {args.input_file}")
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop,
-                                 threads=args.threads)
+                                 threads=args.threads,
+                                 interactive=True)
         if args.mode not in ("validate", "validate-fast"):
             print(f"\n{success('Done.')} {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:

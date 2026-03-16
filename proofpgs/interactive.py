@@ -95,3 +95,33 @@ def select_count_interactive() -> int | None | str:
     except ValueError:
         print(dim("  Invalid input. Using cached subtitles."))
         return "cached"
+
+
+def select_count_interactive_sup(total: int) -> int | None:
+    """Prompt for how many subtitles to export (.sup file).
+
+    For .sup files the entire file is already parsed into memory, so
+    'all' is the natural default (no additional I/O needed).
+
+    Returns a positive int (custom count) or ``None`` (export all).
+    """
+    print(f"How many subtitles to export? ({total} available)")
+    print(f"  {bold('[Enter]')}    All {total}")
+    print(f"  {bold('[number]')}   Custom count")
+    try:
+        choice = input("> ").strip()
+    except EOFError:
+        print()
+        return None
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)
+
+    if not choice:
+        return None
+    try:
+        n = int(choice)
+        return n if n > 0 else None
+    except ValueError:
+        print(dim("  Invalid input. Exporting all."))
+        return None

@@ -14,7 +14,10 @@ from .ffmpeg import (
     extract_all_pgs_tracks, build_track_folder_name,
     extract_track_streaming, extract_analysis_samples,
 )
-from .interactive import select_tracks_interactive, select_count_interactive, confirm_validate_bailed
+from .interactive import (
+    select_tracks_interactive, select_count_interactive,
+    select_count_interactive_sup, confirm_validate_bailed,
+)
 from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
 from .style import (
     info, warn, error, success, heading, dim, bold,
@@ -279,7 +282,8 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      input_name: str = None,
                      track_name: str = None,
                      threads: int = None,
-                     start_time_s: float = None) -> int:
+                     start_time_s: float = None,
+                     interactive: bool = False) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
     display_sets = read_sup(sup_path)
     _adjust_pts_offset(display_sets, start_time_s)
@@ -288,11 +292,21 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
 
     # Color space detection
     detection = detect_from_palettes(display_sets)
-    det_str = format_detection(detection)
-    print(f"  {info('Detected:')} {det_str}")
+    v = detection["verdict"]
+    if v == "hdr":
+        print(f"  {badge_hdr('Mastered for HDR')}")
+    elif v == "sdr":
+        print(f"  {badge_sdr('Mastered for SDR')}")
+    else:
+        print(f"  {info('Detected:')} {format_detection(detection)}")
 
     if mode in ("validate", "validate-fast"):
         return 0
+
+    # --- Interactive count prompt (top-level .sup invocations only) ---
+    if interactive and first is None and sys.stdin.isatty():
+        first = select_count_interactive_sup(total)
+        print()
 
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
