@@ -439,7 +439,12 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     print()
     track_desc = ", ".join(str(i) for i in selected_indices)
-    count_desc = str(max_ds) if max_ds is not None else "all"
+    if max_ds == "cached":
+        count_desc = "cached"
+    elif max_ds is not None:
+        count_desc = str(max_ds)
+    else:
+        count_desc = "all"
     print(f"{info('Processing')} track(s) [{track_desc}], {count_desc} subtitle(s) each.")
     print(f"{info('Mode:')} {bold(mode_note)}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
     print()
@@ -463,21 +468,32 @@ def process_container(input_path: str, out_dir: str, mode: str,
             print(heading(f"=== Track {ti}: {track['language']}{title_str} "
                           f"(stream {track['index']}) ==="))
 
-            # Reuse cached analysis data when it has enough content.
             cached = preview_cache.get(ti)
             content_ds = ([d for d in cached if ds_has_content(d)]
                           if cached else [])
-            if len(content_ds) >= max_ds:
-                display_sets = cached
-            else:
-                try:
-                    display_sets = extract_track_streaming(
-                        ffmpeg_path, input_path, track["index"], max_ds,
-                        seek_s=mid_seek,
-                    )
-                except Exception as e:
-                    print(f"  {error('[error]')} Streaming extraction failed: {e}")
+
+            if max_ds == "cached":
+                # Cache-only mode: use whatever was collected during analysis.
+                if not content_ds:
+                    print(f"  {dim('No cached subtitles for this track. Skipping.')}")
+                    print()
                     continue
+                display_sets = cached
+                effective_limit = None  # render all cached DS
+            else:
+                # Reuse cached analysis data when it has enough content.
+                if len(content_ds) >= max_ds:
+                    display_sets = cached
+                else:
+                    try:
+                        display_sets = extract_track_streaming(
+                            ffmpeg_path, input_path, track["index"], max_ds,
+                            seek_s=mid_seek,
+                        )
+                    except Exception as e:
+                        print(f"  {error('[error]')} Streaming extraction failed: {e}")
+                        continue
+                effective_limit = max_ds
 
             if not display_sets:
                 print("  No subtitles found.")
@@ -491,7 +507,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 track_label += f' "{track["title"]}"'
             saved = process_display_sets(
                 display_sets, track_out, track_modes[ti], tonemap, nocrop,
-                limit=max_ds,
+                limit=effective_limit,
                 detection=tracks[ti].get("detection"),
                 input_name=os.path.basename(input_path),
                 track_name=track_label,

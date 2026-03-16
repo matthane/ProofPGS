@@ -12,8 +12,14 @@ def select_tracks_interactive(tracks: list,
     Returns a list of track indices, or the string ``"validate"`` when
     the user chooses to re-analyze bailed tracks.
     """
+    default_indices = (
+        [i for i, t in enumerate(tracks) if not t.get("analysis_bailed")]
+        if has_bailed else list(range(len(tracks)))
+    )
+    default_label = "All validated tracks" if has_bailed else "All tracks"
+
     print("Which tracks do you want to process?")
-    print(f"  {bold('[Enter]')}    All tracks")
+    print(f"  {bold('[Enter]')}    {default_label}")
     print(f"  {bold('[numbers]')}  Specific tracks, e.g. 0,2,3")
     if has_bailed:
         print(f"  {bold('[v]')}        Validate unanalyzed tracks first (may take longer)")
@@ -27,7 +33,7 @@ def select_tracks_interactive(tracks: list,
         sys.exit(130)
 
     if not choice:
-        return list(range(len(tracks)))
+        return default_indices
 
     if has_bailed and choice.lower() == "v":
         return "validate"
@@ -36,12 +42,12 @@ def select_tracks_interactive(tracks: list,
         indices = [int(x.strip()) for x in choice.split(",")]
         valid = [i for i in indices if 0 <= i < len(tracks)]
         if not valid:
-            print(dim("  No valid track numbers entered. Processing all tracks."))
-            return list(range(len(tracks)))
+            print(dim(f"  No valid track numbers entered. Processing {default_label.lower()}."))
+            return default_indices
         return valid
     except ValueError:
-        print(dim("  Invalid input. Processing all tracks."))
-        return list(range(len(tracks)))
+        print(dim(f"  Invalid input. Processing {default_label.lower()}."))
+        return default_indices
 
 
 def confirm_validate_bailed() -> bool:
@@ -60,28 +66,32 @@ def confirm_validate_bailed() -> bool:
     return choice == "v"
 
 
-def select_count_interactive() -> int | None:
-    """Prompt the user for how many subtitles to process per track."""
+def select_count_interactive() -> int | None | str:
+    """Prompt the user for how many subtitles to process per track.
+
+    Returns ``"cached"`` (use analysis cache only), a positive int, or
+    ``None`` (process the entire file).
+    """
     print("How many subtitles to process per track?")
-    print(f"  {bold('[Enter]')}    10 (default — fast preview)")
+    print(f"  {bold('[Enter]')}    All cached (fastest)")
     print(f"  {bold('[number]')}   Custom count")
     print(f"  {bold('[a]')}        All (reads entire file)")
     try:
         choice = input("> ").strip().lower()
     except EOFError:
         print()
-        return 10
+        return "cached"
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(130)
 
     if not choice:
-        return 10
+        return "cached"
     if choice in ("a", "all"):
         return None
     try:
         n = int(choice)
-        return n if n > 0 else 10
+        return n if n > 0 else "cached"
     except ValueError:
-        print(dim("  Invalid input. Using default (10)."))
-        return 10
+        print(dim("  Invalid input. Using cached subtitles."))
+        return "cached"
