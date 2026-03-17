@@ -21,7 +21,7 @@ def main():
         _main()
     except KeyboardInterrupt:
         print(f"\n{dim('Interrupted.')}")
-        sys.exit(130)
+        os._exit(130)
 
 
 def _main():

@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 from .parser import read_sup, ds_has_content
 from .renderer import process_display_sets
@@ -107,133 +109,163 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     else:
         max_packets = ANALYSIS_MAX_DS
 
-    print(f"  {info('Analyzing')} {len(extract_tracks)} PGS track(s)...")
+    # Live elapsed-time display on the "Analyzing" line.
+    _timer_stop = threading.Event()
+    _timer_t0 = time.monotonic()
+    _timer_label = f"  {info('Analyzing')} {len(extract_tracks)} PGS track(s)..."
+    _is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
-    # Content-based watchdog: kill FFmpeg as soon as all tracks have
-    # conclusive detection.  In budgeted mode the deadline acts as a
-    # fallback for sparse tracks; in validate mode there is no deadline.
-    ready_fn = _check_all_detected
+    def _tick():
+        while not _timer_stop.wait(0.5):
+            if _is_tty:
+                e = time.monotonic() - _timer_t0
+                print(f"\r{_timer_label} {dim(f'{e:.0f}s')}", end="", flush=True)
 
-    # --- Try MKV direct extraction first (Cues-based, no FFmpeg) ---
-    sup_paths = None
-    temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
+    _timer_thread = threading.Thread(target=_tick, daemon=True)
+    print(_timer_label, end="", flush=True)
+    _timer_thread.start()
+
     try:
-        if ext == ".mkv":
-            try:
-                from .mkv import extract_analysis_samples_mkv
-                sup_paths = extract_analysis_samples_mkv(
-                    input_path, extract_tracks, temp_dir,
+        # Content-based watchdog: kill FFmpeg as soon as all tracks have
+        # conclusive detection.  In budgeted mode the deadline acts as a
+        # fallback for sparse tracks; in validate mode there is no deadline.
+        ready_fn = _check_all_detected
+
+        # --- Try MKV direct extraction first (Cues-based, no FFmpeg) ---
+        sup_paths = None
+        temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
+        try:
+            if ext == ".mkv":
+                try:
+                    from .mkv import extract_analysis_samples_mkv
+                    sup_paths = extract_analysis_samples_mkv(
+                        input_path, extract_tracks, temp_dir,
+                        seek_s=seek_s,
+                        max_ds=ANALYSIS_MAX_DS,
+                        ready_check=ready_fn,
+                        deadline=budget.deadline() if budget else None,
+                    )
+                except Exception as exc:
+                    sup_paths = None
+                    print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+            if sup_paths is None:
+                # FFmpeg fallback (M2TS, MKV without Cues, or parse failure).
+                sup_paths = extract_analysis_samples(
+                    ffmpeg_path, input_path, extract_tracks, temp_dir,
                     seek_s=seek_s,
-                    max_ds=ANALYSIS_MAX_DS,
-                    ready_check=ready_fn,
+                    max_packets=max_packets,
                     deadline=budget.deadline() if budget else None,
+                    ready_check=ready_fn,
                 )
-            except Exception as exc:
-                sup_paths = None
-                print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
 
-        if sup_paths is None:
-            # FFmpeg fallback (M2TS, MKV without Cues, or parse failure).
-            sup_paths = extract_analysis_samples(
-                ffmpeg_path, input_path, extract_tracks, temp_dir,
-                seek_s=seek_s,
-                max_packets=max_packets,
-                deadline=budget.deadline() if budget else None,
-                ready_check=ready_fn,
-            )
+            for list_i, ti in enumerate(track_indices):
+                t = tracks[ti]
+                sup_path = sup_paths[list_i]
 
-        for list_i, ti in enumerate(track_indices):
-            t = tracks[ti]
-            sup_path = sup_paths[list_i]
+                if os.path.isfile(sup_path) and os.path.getsize(sup_path) > 0:
+                    ds = read_sup(sup_path)
+                else:
+                    ds = []
 
-            if os.path.isfile(sup_path) and os.path.getsize(sup_path) > 0:
-                ds = read_sup(sup_path)
-            else:
-                ds = []
+                # Cap to ANALYSIS_MAX_DS display sets so sample sizes are
+                # consistent across container formats.  For MKV, -frames:s
+                # already limits to this many DS.  For M2TS, the scaled
+                # packet cap may yield slightly more DS (clear DS have
+                # fewer segments), so truncate to keep the sample uniform.
+                if len(ds) > ANALYSIS_MAX_DS:
+                    ds = ds[:ANALYSIS_MAX_DS]
 
-            # Cap to ANALYSIS_MAX_DS display sets so sample sizes are
-            # consistent across container formats.  For MKV, -frames:s
-            # already limits to this many DS.  For M2TS, the scaled
-            # packet cap may yield slightly more DS (clear DS have
-            # fewer segments), so truncate to keep the sample uniform.
-            if len(ds) > ANALYSIS_MAX_DS:
-                ds = ds[:ANALYSIS_MAX_DS]
+                preview_cache[ti] = ds
+                content_count = sum(1 for d in ds if ds_has_content(d))
 
-            preview_cache[ti] = ds
-            content_count = sum(1 for d in ds if ds_has_content(d))
+                # --- Color space detection ---
+                if ds:
+                    t["detection"] = detect_from_palettes(ds)
+                else:
+                    t["detection"] = {
+                        "verdict": None, "confidence": "low",
+                        "max_y": 0, "max_achromatic_y": None,
+                        "max_pq_channel": 0, "num_palettes": 0,
+                    }
 
-            # --- Color space detection ---
-            if ds:
-                t["detection"] = detect_from_palettes(ds)
-            else:
-                t["detection"] = {
-                    "verdict": None, "confidence": "low",
-                    "max_y": 0, "max_achromatic_y": None,
-                    "max_pq_channel": 0, "num_palettes": 0,
-                }
+                # --- Bail-out ---
+                t["analysis_bailed"] = (
+                    content_count == 0 and t["detection"]["verdict"] is None
+                )
 
-            # --- Bail-out ---
-            t["analysis_bailed"] = (
-                content_count == 0 and t["detection"]["verdict"] is None
-            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # --- Retry inconclusive detections from start of file ---
+        if seek_s is not None:
+            can_retry = budget is None or not budget.exhausted()
+            retry_indices = [
+                ti for ti in track_indices
+                if tracks[ti]["detection"]["verdict"] is None and can_retry
+            ]
+            if retry_indices:
+                retry_tracks = [tracks[ti] for ti in retry_indices]
+                temp_dir2 = tempfile.mkdtemp(prefix="pgs_retry_")
+                try:
+                    # Try MKV direct extraction for the retry pass too.
+                    sup_paths2 = None
+                    if ext == ".mkv":
+                        try:
+                            from .mkv import extract_analysis_samples_mkv
+                            sup_paths2 = extract_analysis_samples_mkv(
+                                input_path, retry_tracks, temp_dir2,
+                                seek_s=None,
+                                max_ds=ANALYSIS_MAX_DS,
+                                ready_check=ready_fn,
+                                deadline=budget.deadline() if budget else None,
+                            )
+                        except Exception as exc:
+                            sup_paths2 = None
+                            print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+                    if sup_paths2 is None:
+                        sup_paths2 = extract_analysis_samples(
+                            ffmpeg_path, input_path, retry_tracks, temp_dir2,
+                            seek_s=None,  # from start of file
+                            max_packets=max_packets,
+                            deadline=budget.deadline() if budget else None,
+                            ready_check=ready_fn,
+                        )
+                    for list_i, ti in enumerate(retry_indices):
+                        t = tracks[ti]
+                        sup_path = sup_paths2[list_i]
+                        if (os.path.isfile(sup_path)
+                                and os.path.getsize(sup_path) > 0):
+                            ds = read_sup(sup_path)
+                            fallback = detect_from_palettes(ds)
+                            if fallback["verdict"] is not None:
+                                t["detection"] = fallback
+                            # Update cache if we now have data for a
+                            # previously-bailed track.
+                            content_count = sum(
+                                1 for d in ds if ds_has_content(d)
+                            )
+                            if content_count > 0:
+                                preview_cache[ti] = ds
+                                t["analysis_bailed"] = False
+                finally:
+                    shutil.rmtree(temp_dir2, ignore_errors=True)
 
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    # --- Retry inconclusive detections from start of file ---
-    if seek_s is not None:
-        can_retry = budget is None or not budget.exhausted()
-        retry_indices = [
-            ti for ti in track_indices
-            if tracks[ti]["detection"]["verdict"] is None and can_retry
-        ]
-        if retry_indices:
-            retry_tracks = [tracks[ti] for ti in retry_indices]
-            temp_dir2 = tempfile.mkdtemp(prefix="pgs_retry_")
-            try:
-                # Try MKV direct extraction for the retry pass too.
-                sup_paths2 = None
-                if ext == ".mkv":
-                    try:
-                        from .mkv import extract_analysis_samples_mkv
-                        sup_paths2 = extract_analysis_samples_mkv(
-                            input_path, retry_tracks, temp_dir2,
-                            seek_s=None,
-                            max_ds=ANALYSIS_MAX_DS,
-                            ready_check=ready_fn,
-                            deadline=budget.deadline() if budget else None,
-                        )
-                    except Exception as exc:
-                        sup_paths2 = None
-                        print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
-
-                if sup_paths2 is None:
-                    sup_paths2 = extract_analysis_samples(
-                        ffmpeg_path, input_path, retry_tracks, temp_dir2,
-                        seek_s=None,  # from start of file
-                        max_packets=max_packets,
-                        deadline=budget.deadline() if budget else None,
-                        ready_check=ready_fn,
-                    )
-                for list_i, ti in enumerate(retry_indices):
-                    t = tracks[ti]
-                    sup_path = sup_paths2[list_i]
-                    if (os.path.isfile(sup_path)
-                            and os.path.getsize(sup_path) > 0):
-                        ds = read_sup(sup_path)
-                        fallback = detect_from_palettes(ds)
-                        if fallback["verdict"] is not None:
-                            t["detection"] = fallback
-                        # Update cache if we now have data for a
-                        # previously-bailed track.
-                        content_count = sum(
-                            1 for d in ds if ds_has_content(d)
-                        )
-                        if content_count > 0:
-                            preview_cache[ti] = ds
-                            t["analysis_bailed"] = False
-            finally:
-                shutil.rmtree(temp_dir2, ignore_errors=True)
+        # Always stop the timer — including on KeyboardInterrupt.
+        # Use a short join timeout and suppress exceptions so a second
+        # ^C during cleanup doesn't produce a traceback.
+        _timer_stop.set()
+        try:
+            _timer_thread.join(timeout=1)
+        except (KeyboardInterrupt, OSError):
+            pass
+        elapsed = time.monotonic() - _timer_t0
+        if _is_tty:
+            print(f"\r{_timer_label} {dim(f'{elapsed:.1f}s')}")
+        else:
+            print(f" {dim(f'{elapsed:.1f}s')}")
 
 
 def _print_track_listing(tracks, video_range=None):
@@ -417,8 +449,15 @@ def process_container(input_path: str, out_dir: str, mode: str,
         from .mkv import probe_mkv_subtitle_cues
         has_fast_path = probe_mkv_subtitle_cues(input_path, tracks)
 
+    # Budget logic:
+    #   - MKV with subtitle Cues (fast path): no budget needed
+    #   - validate mode: no budget — run as long as needed
+    #   - Everything else (validate-fast, interactive modes without fast path): 10s watchdog
     if has_fast_path:
-        print(f"  {dim('Subtitle index found — using direct extraction')}")
+        print(f"  {dim('Subtitle index detected')}")
+        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
+                        duration_s, preview_cache, budget=None)
+    elif mode == "validate":
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
                         duration_s, preview_cache, budget=None)
     else:
@@ -427,10 +466,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         budget=Budget(LISTING_BUDGET_S))
 
     # === Phase 3: Display track listing ===
-    # Clear the status lines now that results are ready.
-    if has_fast_path:
-        print(CURSOR_UP_CLEAR, end="", flush=True)  # clear Cues note
-    print(CURSOR_UP_CLEAR, end="", flush=True)  # clear "Analyzing..."
     has_bailed = _print_track_listing(tracks, video_range=video_range)
 
     if mode in ("validate", "validate-fast"):
