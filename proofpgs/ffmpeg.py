@@ -99,9 +99,11 @@ def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
 
     Probes video streams and examines the main video stream's
     ``color_transfer`` field.  Falls back to ``color_primaries``
-    (BT.2020 → HDR) when transfer characteristics are absent, then
-    defaults to SDR — standard Blu-ray rips almost never carry explicit
-    color metadata, while HDR standards require signaling.
+    (BT.2020 → HDR), then checks for a Dolby Vision configuration
+    record in ``side_data_list`` (DV Profile 5 and others may lack
+    standard color metadata entirely).  Defaults to SDR — standard
+    Blu-ray rips almost never carry explicit color metadata, while
+    HDR standards require signaling.
 
     Attached pictures (cover art) are skipped.
 
@@ -149,7 +151,13 @@ def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
     if primaries in _HDR_PRIMARIES:
         return "hdr"
 
-    # 3. No HDR indicators — SDR is the default for video content.
+    # 3. Dolby Vision side data — DV Profile 5 (and others) may lack
+    #    standard color_transfer/color_primaries metadata entirely.
+    for sd in chosen.get("side_data_list", []):
+        if sd.get("side_data_type") == "DOVI configuration record":
+            return "hdr"
+
+    # 4. No HDR indicators — SDR is the default for video content.
     #    SDR Blu-ray rips (H.264/1080p) almost never carry explicit
     #    color metadata; HDR standards require signaling.
     return "sdr"
