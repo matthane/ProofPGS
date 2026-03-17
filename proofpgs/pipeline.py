@@ -107,24 +107,40 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     else:
         max_packets = ANALYSIS_MAX_DS
 
-    label = "Validating" if budget is None else "Analyzing"
-    print(f"  {info(label)} {len(extract_tracks)} PGS track(s)...")
+    print(f"  {info('Analyzing')} {len(extract_tracks)} PGS track(s)...")
 
     # Content-based watchdog: kill FFmpeg as soon as all tracks have
     # conclusive detection.  In budgeted mode the deadline acts as a
     # fallback for sparse tracks; in validate mode there is no deadline.
     ready_fn = _check_all_detected
 
-    # --- Single FFmpeg pass for all tracks ---
+    # --- Try MKV direct extraction first (Cues-based, no FFmpeg) ---
+    sup_paths = None
     temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
     try:
-        sup_paths = extract_analysis_samples(
-            ffmpeg_path, input_path, extract_tracks, temp_dir,
-            seek_s=seek_s,
-            max_packets=max_packets,
-            deadline=budget.deadline() if budget else None,
-            ready_check=ready_fn,
-        )
+        if ext == ".mkv":
+            try:
+                from .mkv import extract_analysis_samples_mkv
+                sup_paths = extract_analysis_samples_mkv(
+                    input_path, extract_tracks, temp_dir,
+                    seek_s=seek_s,
+                    max_ds=ANALYSIS_MAX_DS,
+                    ready_check=ready_fn,
+                    deadline=budget.deadline() if budget else None,
+                )
+            except Exception as exc:
+                sup_paths = None
+                print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+        if sup_paths is None:
+            # FFmpeg fallback (M2TS, MKV without Cues, or parse failure).
+            sup_paths = extract_analysis_samples(
+                ffmpeg_path, input_path, extract_tracks, temp_dir,
+                seek_s=seek_s,
+                max_packets=max_packets,
+                deadline=budget.deadline() if budget else None,
+                ready_check=ready_fn,
+            )
 
         for list_i, ti in enumerate(track_indices):
             t = tracks[ti]
@@ -175,13 +191,30 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             retry_tracks = [tracks[ti] for ti in retry_indices]
             temp_dir2 = tempfile.mkdtemp(prefix="pgs_retry_")
             try:
-                sup_paths2 = extract_analysis_samples(
-                    ffmpeg_path, input_path, retry_tracks, temp_dir2,
-                    seek_s=None,  # from start of file
-                    max_packets=max_packets,
-                    deadline=budget.deadline() if budget else None,
-                    ready_check=ready_fn,
-                )
+                # Try MKV direct extraction for the retry pass too.
+                sup_paths2 = None
+                if ext == ".mkv":
+                    try:
+                        from .mkv import extract_analysis_samples_mkv
+                        sup_paths2 = extract_analysis_samples_mkv(
+                            input_path, retry_tracks, temp_dir2,
+                            seek_s=None,
+                            max_ds=ANALYSIS_MAX_DS,
+                            ready_check=ready_fn,
+                            deadline=budget.deadline() if budget else None,
+                        )
+                    except Exception as exc:
+                        sup_paths2 = None
+                        print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+                if sup_paths2 is None:
+                    sup_paths2 = extract_analysis_samples(
+                        ffmpeg_path, input_path, retry_tracks, temp_dir2,
+                        seek_s=None,  # from start of file
+                        max_packets=max_packets,
+                        deadline=budget.deadline() if budget else None,
+                        ready_check=ready_fn,
+                    )
                 for list_i, ti in enumerate(retry_indices):
                     t = tracks[ti]
                     sup_path = sup_paths2[list_i]
@@ -371,25 +404,37 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     video_range = probe_video_range(ffprobe_path, input_path)
 
-    # === Phase 2: Single-pass analysis (target: <10s wallclock) ===
+    # === Phase 2: Single-pass analysis ===
     preview_cache = {}  # ti -> list of display sets
     all_indices = list(range(len(tracks)))
 
-    if mode == "validate":
+    # MKV files with subtitle tracks indexed in Cues can be analyzed
+    # via direct per-block reads — fast enough to skip the 10s watchdog.
+    # Everything else (M2TS, MKV without subtitle Cues) needs the budget.
+    ext = os.path.splitext(input_path)[1].lower()
+    has_fast_path = False
+    if ext == ".mkv":
+        from .mkv import probe_mkv_subtitle_cues
+        has_fast_path = probe_mkv_subtitle_cues(input_path, tracks)
+
+    if has_fast_path:
+        print(f"  {dim('Subtitle index found — using direct extraction')}")
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
                         duration_s, preview_cache, budget=None)
     else:
-        budget = Budget(LISTING_BUDGET_S)
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        duration_s, preview_cache, budget=budget)
+                        duration_s, preview_cache,
+                        budget=Budget(LISTING_BUDGET_S))
 
     # === Phase 3: Display track listing ===
-    # Clear the "Validating/Analyzing" status line now that results are ready.
-    print(CURSOR_UP_CLEAR, end="", flush=True)
+    # Clear the status lines now that results are ready.
+    if has_fast_path:
+        print(CURSOR_UP_CLEAR, end="", flush=True)  # clear Cues note
+    print(CURSOR_UP_CLEAR, end="", flush=True)  # clear "Analyzing..."
     has_bailed = _print_track_listing(tracks, video_range=video_range)
 
     if mode in ("validate", "validate-fast"):
-        if mode == "validate-fast" and has_bailed and sys.stdin.isatty():
+        if has_bailed and sys.stdin.isatty():
             if confirm_validate_bailed():
                 bailed_indices = [
                     i for i, t in enumerate(tracks)
@@ -521,14 +566,32 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 if len(content_ds) >= max_ds:
                     display_sets = cached
                 else:
-                    try:
-                        display_sets = extract_track_streaming(
-                            ffmpeg_path, input_path, track["index"], max_ds,
-                            seek_s=mid_seek,
-                        )
-                    except Exception as e:
-                        print(f"  {error('[error]')} Streaming extraction failed: {e}")
-                        continue
+                    display_sets = None
+                    # Try MKV direct extraction first.
+                    if os.path.splitext(input_path)[1].lower() == ".mkv":
+                        try:
+                            from .mkv import extract_analysis_samples_mkv
+                            stream_tmp = tempfile.mkdtemp(prefix="pgs_stream_")
+                            sup_list = extract_analysis_samples_mkv(
+                                input_path, [track], stream_tmp,
+                                seek_s=mid_seek, max_ds=max_ds,
+                            )
+                            if sup_list and os.path.getsize(sup_list[0]) > 0:
+                                display_sets = read_sup(sup_list[0])
+                            shutil.rmtree(stream_tmp, ignore_errors=True)
+                        except Exception as exc:
+                            display_sets = None
+                            print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+                    if display_sets is None:
+                        try:
+                            display_sets = extract_track_streaming(
+                                ffmpeg_path, input_path, track["index"], max_ds,
+                                seek_s=mid_seek,
+                            )
+                        except Exception as e:
+                            print(f"  {error('[error]')} Streaming extraction failed: {e}")
+                            continue
                 effective_limit = max_ds
 
             if not display_sets:
@@ -562,14 +625,29 @@ def process_container(input_path: str, out_dir: str, mode: str,
         temp_dir = tempfile.mkdtemp(prefix="pgs_extract_")
 
         try:
-            try:
-                sup_paths = extract_all_pgs_tracks(
-                    ffmpeg_path, input_path, selected_track_list,
-                    temp_dir, duration_s
-                )
-            except subprocess.CalledProcessError as e:
-                print(f"{error('[error]')} ffmpeg extraction failed: {e}")
-                return
+            # Try MKV direct extraction first (Cues-based, orders of
+            # magnitude faster than FFmpeg for large files).
+            sup_paths = None
+            if os.path.splitext(input_path)[1].lower() == ".mkv":
+                try:
+                    from .mkv import extract_pgs_tracks_mkv
+                    sup_paths = extract_pgs_tracks_mkv(
+                        input_path, selected_track_list,
+                        temp_dir, duration_s
+                    )
+                except Exception as exc:
+                    sup_paths = None
+                    print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+
+            if sup_paths is None:
+                try:
+                    sup_paths = extract_all_pgs_tracks(
+                        ffmpeg_path, input_path, selected_track_list,
+                        temp_dir, duration_s
+                    )
+                except subprocess.CalledProcessError as e:
+                    print(f"{error('[error]')} ffmpeg extraction failed: {e}")
+                    return
 
             for enum_i, ti in enumerate(selected_indices):
                 track = tracks[ti]
