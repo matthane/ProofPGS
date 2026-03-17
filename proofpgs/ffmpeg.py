@@ -224,7 +224,7 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
     to the middle of the file and ``-frames:s`` to cap each output at
     *max_packets* packets.  The caller should scale this value for
-    transport stream formats (M2TS/TS) where each packet carries a
+    M2TS containers where each packet carries a
     single PGS segment rather than a full display set.
 
     Three exit conditions (whichever fires first):

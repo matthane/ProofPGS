@@ -35,7 +35,7 @@ That's it. ProofPGS will:
 4. Prompt you for how many subtitles to decode (defaults to up to 10 cached analysis samples for instant output)
 5. Decode using the correct color pipeline and save PNGs to a `<filename>_pgs_output/` folder next to the input file
 
-Works the same way with `.sup`, `.m2ts`, `.ts`, `.mp4`, and other container formats.
+Works the same way with `.sup` and `.m2ts` files.
 
 ## Advanced Usage
 
@@ -103,7 +103,7 @@ python -m proofpgs movie.mkv --mode validate-fast
 
 ## Windows Explorer Integration
 
-ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.m2ts`, `.ts`, `.mp4`, `.m4v`, `.avi`, `.wmv`). The menu shows a **ProofPGS** submenu with entries for each output mode.
+ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.m2ts`). The menu shows a **ProofPGS** submenu with entries for each output mode.
 
 ```bash
 # Register context menu entries:

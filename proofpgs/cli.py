@@ -32,7 +32,7 @@ def _main():
     )
     parser.add_argument("input_file", nargs="?", default=None,
                         help="Path to a .sup file or video container "
-                             "(MKV, M2TS, TS, MP4, etc.)")
+                             "(MKV, M2TS)")
     parser.add_argument("--install", action="store_true",
                         help="Register Windows Explorer context menu entries "
                              "for all supported file types")

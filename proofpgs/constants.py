@@ -39,8 +39,8 @@ def format_time(seconds: float) -> str:
 LISTING_BUDGET_S = 10.0
 
 # Target display sets for analysis, also used as the per-track FFmpeg
-# packet cap via -frames:s.  In MKV/MP4 one packet = one DS, so this
-# is passed directly.  In M2TS/TS one packet = one PGS segment (~5
+# packet cap via -frames:s.  In MKV one packet = one DS, so this
+# is passed directly.  In M2TS one packet = one PGS segment (~5
 # per DS), so the caller multiplies by TS_SEGMENTS_PER_DS.
 #
 # More samples improve estimation accuracy but slow down the listing
@@ -49,8 +49,8 @@ LISTING_BUDGET_S = 10.0
 # (e.g. to 50) if analysis speed is more important than accuracy.
 ANALYSIS_MAX_DS = 125
 
-# Typical number of PGS segments per display set in transport streams.
-# Used to scale ANALYSIS_MAX_DS for M2TS/TS containers.
+# Typical number of PGS segments per display set in M2TS streams.
+# Used to scale ANALYSIS_MAX_DS for M2TS containers.
 TS_SEGMENTS_PER_DS = 5
 
 # Default number of content display sets to render when the user

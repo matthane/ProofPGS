@@ -98,11 +98,11 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
 
     extract_tracks = [tracks[ti] for ti in track_indices]
 
-    # Transport streams (M2TS/TS) demux one PGS segment per packet,
-    # while MKV/MP4 pack a full display set into each packet.  Scale
+    # M2TS demuxes one PGS segment per packet, while MKV packs a
+    # full display set into each packet.  Scale
     # the packet cap so both formats yield ~the same number of DS.
     ext = os.path.splitext(input_path)[1].lower()
-    if ext in (".m2ts", ".ts", ".mts"):
+    if ext == ".m2ts":
         max_packets = ANALYSIS_MAX_DS * TS_SEGMENTS_PER_DS
     else:
         max_packets = ANALYSIS_MAX_DS
