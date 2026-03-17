@@ -51,7 +51,7 @@ def _main():
                         help="HDR->SDR tonemapping. clip=hard clip at 203 nits ref white "
                              "(best for subtitles), reinhard=soft roll-off. Default: clip")
     parser.add_argument("--out", default=None,
-                        help="Output directory. Default: pgs_output/ next to the input file")
+                        help="Output directory. Default: <filename>_pgs_output/ next to the input file")
     parser.add_argument("--first", type=int, default=None,
                         help="Decode only the first N subtitles. "
                              "For containers, interactive prompt defaults to 10")
@@ -84,8 +84,9 @@ def _main():
         sys.exit(1)
 
     if args.out is None:
+        stem = os.path.splitext(os.path.basename(os.path.abspath(args.input_file)))[0]
         args.out = os.path.join(os.path.dirname(os.path.abspath(args.input_file)),
-                                "pgs_output")
+                                f"{stem}_pgs_output")
 
     ext = os.path.splitext(args.input_file)[1].lower()
 
