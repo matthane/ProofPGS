@@ -33,7 +33,7 @@ That's it. ProofPGS will:
 2. Auto-detect whether each track is SDR or HDR (per-track color space detection), flagging any mismatch with the video stream's dynamic range
 3. Prompt you to pick which tracks to process (with an option to validate sparse tracks)
 4. Prompt you for how many subtitles to decode (defaults to cached analysis samples for instant output)
-5. Decode using the correct color pipeline and save PNGs to a `pgs_output/` folder next to the input file
+5. Decode using the correct color pipeline and save PNGs to a `<filename>_pgs_output/` folder next to the input file
 
 Works the same way with `.sup`, `.m2ts`, `.ts`, `.mp4`, and other container formats.
 
@@ -93,7 +93,7 @@ python -m proofpgs movie.mkv --mode validate-fast
 |---|---|---|---|
 | `--mode` | `auto`, `compare`, `hdr`, `sdr`, `validate`, `validate-fast` | `auto` | `auto` detects color space per-track and decodes each track independently with the correct pipeline. `compare` produces annotated side-by-side proofing images. `hdr` and `sdr` produce direct transparent PNG exports. `validate` shows track info and detection only (no output). `validate-fast` same as validate but under the 10s analysis budget with option to re-analyze sparse tracks. |
 | `--tonemap` | `clip`, `reinhard` | `clip` | HDR-to-SDR tonemapping strategy. `clip` hard-clips at 203 nits reference white (best for subtitles). `reinhard` applies a soft roll-off. |
-| `--out` | path | `pgs_output/` next to input file | Output directory. |
+| `--out` | path | `<filename>_pgs_output/` next to input file | Output directory. |
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
 | `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
@@ -122,7 +122,7 @@ On Windows 11, right-click a supported file and choose **Show more options** to 
 Each subtitle is saved as a PNG file named with its display set index, timestamp, and decoded color space:
 
 ```
-pgs_output/
+movie_pgs_output/
   track_0_eng/
     ds_0000_12500ms_sdr.png
     ds_0001_15200ms_sdr.png
@@ -132,7 +132,7 @@ pgs_output/
     ...
 ```
 
-The range suffix (`_sdr`, `_hdr`, or `_compare`) indicates which color pipeline was used to decode the subtitle.
+The output folder is named after the input file (e.g. `movie.mkv` → `movie_pgs_output/`). The range suffix (`_sdr`, `_hdr`, or `_compare`) indicates which color pipeline was used to decode the subtitle.
 
 For `.sup` input (single track), images are written directly to the output directory without a track subfolder.
 
