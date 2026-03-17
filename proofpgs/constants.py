@@ -19,7 +19,7 @@ SEG_END = 0x80  # End of Display Set
 
 # Recognised file extensions
 SUP_EXTENSIONS = {".sup"}
-CONTAINER_EXTENSIONS = {".mkv", ".m2ts", ".ts", ".mp4", ".m4v", ".avi", ".wmv"}
+CONTAINER_EXTENSIONS = {".mkv", ".m2ts"}
 
 
 def format_time(seconds: float) -> str:

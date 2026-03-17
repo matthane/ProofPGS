@@ -95,7 +95,7 @@ For container inputs, `probe_video_range()` in `ffmpeg.py` runs a separate ffpro
 
 ## Adding a new container format
 
-Add the extension to `CONTAINER_EXTENSIONS` in `constants.py`. The rest of the pipeline uses ffprobe/ffmpeg generically and will handle it automatically.
+Add the extension to `CONTAINER_EXTENSIONS` in `constants.py`. Only formats that can carry PGS subtitle streams should be added (currently MKV and M2TS). PGS is an HDMV/Blu-ray spec — only Matroska and BDAV transport streams (`.m2ts`) properly support it. Generic `.ts`, MP4, AVI, and WMV cannot carry PGS. The rest of the pipeline uses ffprobe/ffmpeg generically and will handle it automatically.
 
 ## Colour pipeline reference
 
