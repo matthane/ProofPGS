@@ -2,6 +2,7 @@
 
 import sys
 
+from .constants import DEFAULT_INTERACTIVE_COUNT
 from .style import bold, dim
 
 
@@ -73,7 +74,7 @@ def select_count_interactive() -> int | None | str:
     ``None`` (process the entire file).
     """
     print("How many subtitles to process per track?")
-    print(f"  {bold('[Enter]')}    All cached (fastest)")
+    print(f"  {bold('[Enter]')}    Up to {DEFAULT_INTERACTIVE_COUNT} (cached)")
     print(f"  {bold('[number]')}   Custom count")
     print(f"  {bold('[a]')}        All (reads entire file)")
     try:

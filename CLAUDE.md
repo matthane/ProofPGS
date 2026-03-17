@@ -65,13 +65,13 @@ When listing PGS tracks in a container, the analysis phase (SDR/HDR detection) r
 The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track display-set cap is `ANALYSIS_MAX_DS` (default 125). For transport streams (M2TS/TS), this is multiplied by `TS_SEGMENTS_PER_DS` (default 5) since each PGS segment is a separate packet.
 
 ### Preview samples from the middle of the file
-Both the analysis extraction and streaming extraction extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits. The interactive count prompt defaults to using cached analysis samples (no additional extraction needed), but the user can request a custom count or all subtitles.
+Both the analysis extraction and streaming extraction extract from the **middle** of the file (seek to `duration/2 - 60s`), not from the start. This gives representative movie content rather than intros or credits. The interactive count prompt defaults to up to 10 cached analysis samples (`DEFAULT_INTERACTIVE_COUNT` in `constants.py`), with no additional extraction needed. The user can request a custom count or all subtitles.
 
 ### Three extraction strategies
 
 | Situation | Strategy |
 |---|---|
-| Interactive default (cached) | Reuses display sets already collected during analysis. No additional FFmpeg extraction. |
+| Interactive default (cached) | Reuses display sets already collected during analysis, capped at `DEFAULT_INTERACTIVE_COUNT` (10). No additional FFmpeg extraction. |
 | `--first N` or custom interactive count | Streaming via pipe — FFmpeg killed once N display sets collected. No temp files. Reuses analysis cache if it already has enough content. |
 | `--tracks all` (no limit) | Batch — single FFmpeg pass extracts all selected tracks to temp `.sup` files, then decoded sequentially. |
 

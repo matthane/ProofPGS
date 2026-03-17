@@ -53,6 +53,10 @@ ANALYSIS_MAX_DS = 125
 # Used to scale ANALYSIS_MAX_DS for M2TS/TS containers.
 TS_SEGMENTS_PER_DS = 5
 
+# Default number of content display sets to render when the user
+# accepts the interactive "cached" default (no additional extraction).
+DEFAULT_INTERACTIVE_COUNT = 10
+
 
 class Budget:
     """Lightweight wallclock budget tracker using time.monotonic()."""

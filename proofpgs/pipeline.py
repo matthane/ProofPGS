@@ -18,7 +18,8 @@ from .interactive import (
     select_tracks_interactive, select_count_interactive,
     select_count_interactive_sup, confirm_validate_bailed,
 )
-from .constants import Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS, TS_SEGMENTS_PER_DS
+from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
+                        TS_SEGMENTS_PER_DS, DEFAULT_INTERACTIVE_COUNT)
 from .style import (
     info, warn, error, success, heading, dim, bold,
     badge_hdr, badge_sdr, badge_compare, badge_unknown, badge_mismatch,
@@ -475,7 +476,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print()
     track_desc = ", ".join(str(i) for i in selected_indices)
     if max_ds == "cached":
-        count_desc = "cached"
+        count_desc = f"up to {DEFAULT_INTERACTIVE_COUNT} cached"
     elif max_ds is not None:
         count_desc = str(max_ds)
     else:
@@ -514,7 +515,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     print()
                     continue
                 display_sets = cached
-                effective_limit = None  # render all cached DS
+                effective_limit = DEFAULT_INTERACTIVE_COUNT
             else:
                 # Reuse cached analysis data when it has enough content.
                 if len(content_ds) >= max_ds:
@@ -536,7 +537,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
             _adjust_pts_offset(display_sets, start_time_s)
             content_total = sum(1 for d in display_sets if ds_has_content(d))
-            print(f"  Collected {bold(str(content_total))} subtitle(s).")
+            if max_ds == "cached" and content_total > effective_limit:
+                print(f"  Collected {bold(str(content_total))} subtitle(s),"
+                      f" rendering first {bold(str(effective_limit))}.")
+            else:
+                print(f"  Collected {bold(str(content_total))} subtitle(s).")
             track_label = f"Stream {track['index']}: {track['language']}"
             if track["title"]:
                 track_label += f' "{track["title"]}"'
