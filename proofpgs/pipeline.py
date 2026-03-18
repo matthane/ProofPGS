@@ -21,7 +21,8 @@ from .interactive import (
     select_count_interactive_sup, confirm_validate_bailed,
 )
 from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
-                        TS_SEGMENTS_PER_DS, DEFAULT_INTERACTIVE_COUNT)
+                        TS_SEGMENTS_PER_DS, DEFAULT_INTERACTIVE_COUNT,
+                        MATROSKA_EXTENSIONS)
 from .style import (
     info, warn, error, success, heading, dim, bold,
     badge_hdr, badge_sdr, badge_compare, badge_unknown, badge_mismatch,
@@ -135,7 +136,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
         sup_paths = None
         temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
         try:
-            if ext == ".mkv":
+            if ext in MATROSKA_EXTENSIONS:
                 try:
                     from .mkv import extract_analysis_samples_mkv
                     sup_paths = extract_analysis_samples_mkv(
@@ -210,7 +211,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                 try:
                     # Try MKV direct extraction for the retry pass too.
                     sup_paths2 = None
-                    if ext == ".mkv":
+                    if ext in MATROSKA_EXTENSIONS:
                         try:
                             from .mkv import extract_analysis_samples_mkv
                             sup_paths2 = extract_analysis_samples_mkv(
@@ -445,7 +446,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     # Everything else (M2TS, MKV without subtitle Cues) needs the budget.
     ext = os.path.splitext(input_path)[1].lower()
     has_fast_path = False
-    if ext == ".mkv":
+    if ext in MATROSKA_EXTENSIONS:
         from .mkv import probe_mkv_subtitle_cues
         has_fast_path = probe_mkv_subtitle_cues(input_path, tracks)
 
@@ -603,7 +604,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 else:
                     display_sets = None
                     # Try MKV direct extraction first.
-                    if os.path.splitext(input_path)[1].lower() == ".mkv":
+                    if os.path.splitext(input_path)[1].lower() in MATROSKA_EXTENSIONS:
                         try:
                             from .mkv import extract_analysis_samples_mkv
                             stream_tmp = tempfile.mkdtemp(prefix="pgs_stream_")
@@ -663,7 +664,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
             # Try MKV direct extraction first (Cues-based, orders of
             # magnitude faster than FFmpeg for large files).
             sup_paths = None
-            if os.path.splitext(input_path)[1].lower() == ".mkv":
+            if os.path.splitext(input_path)[1].lower() in MATROSKA_EXTENSIONS:
                 try:
                     from .mkv import extract_pgs_tracks_mkv
                     sup_paths = extract_pgs_tracks_mkv(
