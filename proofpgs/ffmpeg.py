@@ -247,16 +247,14 @@ def extract_all_pgs_tracks(ffmpeg_path: str, input_path: str,
 
 def extract_analysis_samples(ffmpeg_path: str, input_path: str,
                               tracks: list, temp_dir: str,
-                              seek_s: float = None,
                               max_packets: int = ANALYSIS_MAX_DS,
                               deadline: float = None,
                               ready_check=None) -> list:
     """Single FFmpeg pass to extract PGS samples for all tracks at once.
 
-    Writes each track to a separate temp .sup file.  Uses ``-ss`` to seek
-    to the middle of the file and ``-frames:s`` to cap each output at
-    *max_packets* packets.  The caller should scale this value for
-    M2TS containers where each packet carries a
+    Writes each track to a separate temp .sup file.  Uses ``-frames:s``
+    to cap each output at *max_packets* packets.  The caller should
+    scale this value for M2TS containers where each packet carries a
     single PGS segment rather than a full display set.
 
     Three exit conditions (whichever fires first):
@@ -278,8 +276,6 @@ def extract_analysis_samples(ffmpeg_path: str, input_path: str,
     deadlock (same rationale as ``extract_track_streaming``).
     """
     cmd = [ffmpeg_path, "-v", "error"]
-    if seek_s is not None and seek_s > 0:
-        cmd += ["-ss", str(seek_s), "-copyts"]
 
     cmd += ["-progress", "pipe:1"]
 
@@ -365,18 +361,13 @@ def build_track_folder_name(pgs_index: int, track_info: dict) -> str:
 
 
 def extract_track_streaming(ffmpeg_path: str, input_path: str,
-                            stream_index: int, max_ds: int = None,
-                            seek_s: float = None,
-                            read_duration_s: float = None) -> list:
+                            stream_index: int, max_ds: int = None) -> list:
     """Extract a single PGS track via pipe, parsing incrementally.
 
     Terminates FFmpeg early once max_ds display sets are collected,
     so only the portion of the container up to the last needed subtitle
     is read from disk.  For a 50 GB movie where the first 10 subtitles
     appear in the first 5 minutes, this reads only ~5 minutes of data.
-
-    Optional seek_s / read_duration_s allow targeting a specific window
-    (e.g. the middle of the file for preview sampling).
 
     No temp files are created — everything flows through the pipe.
 
@@ -388,10 +379,6 @@ def extract_track_streaming(ffmpeg_path: str, input_path: str,
     Returns a list of display sets.
     """
     cmd = [ffmpeg_path, "-v", "error"]
-    if seek_s is not None and seek_s > 0:
-        cmd += ["-ss", str(seek_s), "-copyts"]
-    if read_duration_s is not None and read_duration_s > 0:
-        cmd += ["-t", str(read_duration_s)]
     cmd += ["-i", input_path,
             "-map", f"0:{stream_index}",
             "-c", "copy", "-f", "sup", "pipe:1"]

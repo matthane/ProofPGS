@@ -83,7 +83,7 @@ def _resolve_auto_mode(detection: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
-                    duration_s, preview_cache, budget=None):
+                    preview_cache, budget=None):
     """Single-pass analysis: extract samples for all requested tracks at
     once, then run detection on each.
 
@@ -93,11 +93,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     """
     if not track_indices:
         return
-
-    # Determine seek position — mid-file for long files, none for short.
-    has_duration = duration_s is not None and duration_s > 0
-    is_short = not has_duration or duration_s <= 120
-    seek_s = None if is_short else max(0, (duration_s / 2) - 60)
 
     extract_tracks = [tracks[ti] for ti in track_indices]
 
@@ -141,7 +136,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                     from .mkv import extract_analysis_samples_mkv
                     sup_paths = extract_analysis_samples_mkv(
                         input_path, extract_tracks, temp_dir,
-                        seek_s=seek_s,
                         max_ds=ANALYSIS_MAX_DS,
                         ready_check=ready_fn,
                         deadline=budget.deadline() if budget else None,
@@ -154,7 +148,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
                 # FFmpeg fallback (M2TS, MKV without Cues, or parse failure).
                 sup_paths = extract_analysis_samples(
                     ffmpeg_path, input_path, extract_tracks, temp_dir,
-                    seek_s=seek_s,
                     max_packets=max_packets,
                     deadline=budget.deadline() if budget else None,
                     ready_check=ready_fn,
@@ -197,61 +190,6 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
-
-        # --- Retry inconclusive detections from start of file ---
-        if seek_s is not None:
-            can_retry = budget is None or not budget.exhausted()
-            retry_indices = [
-                ti for ti in track_indices
-                if tracks[ti]["detection"]["verdict"] is None and can_retry
-            ]
-            if retry_indices:
-                retry_tracks = [tracks[ti] for ti in retry_indices]
-                temp_dir2 = tempfile.mkdtemp(prefix="pgs_retry_")
-                try:
-                    # Try MKV direct extraction for the retry pass too.
-                    sup_paths2 = None
-                    if ext in MATROSKA_EXTENSIONS:
-                        try:
-                            from .mkv import extract_analysis_samples_mkv
-                            sup_paths2 = extract_analysis_samples_mkv(
-                                input_path, retry_tracks, temp_dir2,
-                                seek_s=None,
-                                max_ds=ANALYSIS_MAX_DS,
-                                ready_check=ready_fn,
-                                deadline=budget.deadline() if budget else None,
-                            )
-                        except Exception as exc:
-                            sup_paths2 = None
-                            print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
-
-                    if sup_paths2 is None:
-                        sup_paths2 = extract_analysis_samples(
-                            ffmpeg_path, input_path, retry_tracks, temp_dir2,
-                            seek_s=None,  # from start of file
-                            max_packets=max_packets,
-                            deadline=budget.deadline() if budget else None,
-                            ready_check=ready_fn,
-                        )
-                    for list_i, ti in enumerate(retry_indices):
-                        t = tracks[ti]
-                        sup_path = sup_paths2[list_i]
-                        if (os.path.isfile(sup_path)
-                                and os.path.getsize(sup_path) > 0):
-                            ds = read_sup(sup_path)
-                            fallback = detect_from_palettes(ds)
-                            if fallback["verdict"] is not None:
-                                t["detection"] = fallback
-                            # Update cache if we now have data for a
-                            # previously-bailed track.
-                            content_count = sum(
-                                1 for d in ds if ds_has_content(d)
-                            )
-                            if content_count > 0:
-                                preview_cache[ti] = ds
-                                t["analysis_bailed"] = False
-                finally:
-                    shutil.rmtree(temp_dir2, ignore_errors=True)
 
     finally:
         # Always stop the timer — including on KeyboardInterrupt.
@@ -480,13 +418,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
     if has_fast_path:
         print(f"  {dim('Subtitle index detected')}")
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        duration_s, preview_cache, budget=None)
+                        preview_cache, budget=None)
     elif mode == "validate":
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        duration_s, preview_cache, budget=None)
+                        preview_cache, budget=None)
     else:
         _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        duration_s, preview_cache,
+                        preview_cache,
                         budget=Budget(LISTING_BUDGET_S))
 
     # === Phase 3: Display track listing ===
@@ -500,7 +438,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     if t.get("analysis_bailed")
                 ]
                 _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
-                                input_path, duration_s, preview_cache,
+                                input_path, preview_cache,
                                 budget=None)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 _print_track_listing(tracks, video_range=video_range)
@@ -529,7 +467,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     if t.get("analysis_bailed")
                 ]
                 _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
-                                input_path, duration_s, preview_cache,
+                                input_path, preview_cache,
                                 budget=None)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 has_bailed = _print_track_listing(tracks, video_range=video_range)
@@ -595,9 +533,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     if max_ds is not None:
         # ---- Streaming path: pipe per track, stop early ----
-        mid_seek = None
-        if duration_s and duration_s > 0:
-            mid_seek = max(0, (duration_s / 2) - 60)
 
         for ti in selected_indices:
             track = tracks[ti]
@@ -633,7 +568,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                             stream_tmp = tempfile.mkdtemp(prefix="pgs_stream_")
                             sup_list = extract_analysis_samples_mkv(
                                 input_path, [track], stream_tmp,
-                                seek_s=mid_seek, max_ds=max_ds,
+                                max_ds=max_ds,
                             )
                             if sup_list and os.path.getsize(sup_list[0]) > 0:
                                 display_sets = read_sup(sup_list[0])
@@ -646,7 +581,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         try:
                             display_sets = extract_track_streaming(
                                 ffmpeg_path, input_path, track["index"], max_ds,
-                                seek_s=mid_seek,
                             )
                         except Exception as e:
                             print(f"  {error('[error]')} Streaming extraction failed: {e}")

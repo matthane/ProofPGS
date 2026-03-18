@@ -1031,7 +1031,7 @@ def _read_single_block_direct(args):
 
 
 def extract_analysis_samples_mkv(input_path: str, tracks: list,
-                                 temp_dir: str, seek_s: float = None,
+                                 temp_dir: str,
                                  max_ds: int = 125,
                                  ready_check=None,
                                  deadline: float = None) -> list | None:
@@ -1050,8 +1050,6 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
     Falls back to cluster-by-cluster scanning when CueRelativePosition
     is absent.
 
-    *seek_s*: start extracting from this time offset (seconds).
-              None means from the beginning.
     *max_ds*: stop after collecting this many display sets per track.
     *ready_check*: optional callback ``(list[str]) -> bool``.  Called
         periodically with the current temp ``.sup`` file paths.  If it
@@ -1071,11 +1069,6 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
          mkv_num_to_enum, cluster_entries, block_entries,
          track_compression) = meta
 
-    # --- Filter entries to the target time window ---
-    seek_matroska = None
-    if seek_s is not None and seek_s > 0:
-        seek_matroska = int(seek_s * 1_000_000_000 / ts_scale_ns)
-
     # --- Prepare temp paths ---
     sup_paths = []
     for ti in range(len(tracks)):
@@ -1086,14 +1079,27 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
     sup_buffers: dict[int, bytearray] = {ti: bytearray() for ti in range(len(tracks))}
 
     def _count_ds(payload):
-        """Count END segments in a raw PGS payload."""
+        """Count *content* display sets in a raw PGS payload.
+
+        Only display sets containing an ODS (Object Definition Segment)
+        are counted — matching ``read_sup_streaming``'s behaviour so that
+        ``max_ds=10`` yields 10 renderable subtitles, not 10 total DS
+        (which would include clear/hide display sets).
+        """
+        from .constants import SEG_ODS
         count = 0
+        has_ods = False
         pos = 0
         while pos < len(payload):
             if pos + 3 > len(payload):
                 break
-            if payload[pos] == SEG_END:
-                count += 1
+            seg_type = payload[pos]
+            if seg_type == SEG_ODS:
+                has_ods = True
+            elif seg_type == SEG_END:
+                if has_ods:
+                    count += 1
+                has_ods = False
             seg_size = struct.unpack(">H", payload[pos + 1:pos + 3])[0]
             pos += 3 + seg_size
         return count
@@ -1111,8 +1117,6 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
 
         per_track_blocks: dict[int, list] = {ti: [] for ti in range(len(tracks))}
         for cue_time, cluster_pos, rel_pos, track_num in block_entries:
-            if seek_matroska is not None and cue_time < seek_matroska:
-                continue
             enum_idx = mkv_num_to_enum.get(track_num)
             if enum_idx is not None:
                 per_track_blocks[enum_idx].append(
@@ -1125,9 +1129,9 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
         # Build the work queue: interleave blocks from all tracks so
         # the thread pool works on multiple tracks concurrently.  Stop
         # adding blocks for a track once we've queued enough (estimate
-        # ~2 blocks per DS as a conservative cap, actual counting
-        # happens as results come in).
-        max_blocks_per_track = max_ds * 3  # generous cap
+        # ~2 blocks per content DS pair as a conservative cap, actual
+        # counting happens as results come in).
+        max_blocks_per_track = max_ds * 5  # generous cap
         work_items = []  # (enum_idx, work_args)
         for ti in range(len(tracks)):
             for bi, (ct, cp, rp, tn) in enumerate(per_track_blocks[ti]):
@@ -1187,8 +1191,6 @@ def extract_analysis_samples_mkv(input_path: str, tracks: list,
     else:
         # ===== Fallback: cluster-by-cluster scan =====
         entries = cluster_entries
-        if seek_matroska is not None:
-            entries = [(ct, cp) for ct, cp in entries if ct >= seek_matroska]
         if not entries:
             return None
 
