@@ -4,7 +4,7 @@
 
 A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles. Validates PGS tracks with per-track SDR/HDR detection and can export each subtitle as a PNG using the correct colour pipeline — **HDR** (UHD Blu-ray, BT.2020 + PQ) or **SDR** (standard Blu-ray, BT.709).
 
-Accepts `.sup` files directly, or video containers (MKV, M2TS, etc.) from which PGS subtitle tracks are automatically discovered and extracted via FFmpeg.
+Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which PGS subtitle tracks are automatically discovered and extracted via FFmpeg.
 
 ## Requirements
 
@@ -103,7 +103,7 @@ python -m proofpgs movie.mkv --mode validate-fast
 
 ## Windows Explorer Integration
 
-ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.m2ts`). The menu shows a **ProofPGS** submenu with entries for each output mode.
+ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.mk3d`, `.m2ts`). The menu shows a **ProofPGS** submenu with entries for each output mode.
 
 ```bash
 # Register context menu entries:

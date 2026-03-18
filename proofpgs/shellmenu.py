@@ -7,17 +7,27 @@ from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
 from .style import error, success, dim
 
 _MENU_NAME = "ProofPGS"
-_SUBMENU_KEY = "ProofPGS.SubMenu"
+_SUBMENU_SUP = "ProofPGS.SupMenu"
+_SUBMENU_CONTAINER = "ProofPGS.ContainerMenu"
 
 # (registry_name, display_label, mode_value, use_pause)
 # use_pause: validate exits immediately so needs & pause to keep the window open
-_MODES = [
-    ("01_auto",     "Auto export (detect color space)",      "auto",     False),
-    ("02_compare",  "Compare (SDR && HDR side-by-side)", "compare",  False),
-    ("03_hdr",      "Export as HDR (BT.2020+PQ)",               "hdr",      False),
-    ("04_sdr",      "Export as SDR (BT.709)",                    "sdr",      False),
-    ("05_validate", "Validate (show track info only, may be slow)", "validate", True),
-    ("06_validate_fast", "Validate fast (skips sparse tracks)", "validate-fast", False),
+_COMMON_MODES = [
+    ("01_auto",     "Auto export (detect color space)",          "auto",     False),
+    ("02_compare",  "Compare (SDR && HDR side-by-side)",     "compare",  False),
+    ("03_hdr",      "Export as HDR (BT.2020+PQ)",                   "hdr",      False),
+    ("04_sdr",      "Export as SDR (BT.709)",                        "sdr",      False),
+]
+
+# .sup files are parsed directly — no FFmpeg analysis budget, single track
+_SUP_MODES = _COMMON_MODES + [
+    ("05_validate", "Validate", "validate", True),
+]
+
+# Containers need FFmpeg analysis; validate-fast skips sparse tracks
+_CONTAINER_MODES = _COMMON_MODES + [
+    ("05_validate",      "Validate (show track info only, may be slow)", "validate", True),
+    ("06_validate_fast", "Validate fast (skips sparse tracks)",          "validate-fast", False),
 ]
 
 
@@ -125,42 +135,47 @@ def install():
         sys.exit(1)
 
     project_dir = _project_root()
-    extensions = _all_extensions()
+    sup_exts = sorted(SUP_EXTENSIONS)
+    container_exts = sorted(CONTAINER_EXTENSIONS)
 
-    # --- Create shared submenu commands ---
-    submenu_shell = f"Software\\Classes\\{_SUBMENU_KEY}\\shell"
+    # --- Create submenu commands for each extension group ---
+    for submenu_key, modes in [(_SUBMENU_SUP, _SUP_MODES),
+                                (_SUBMENU_CONTAINER, _CONTAINER_MODES)]:
+        submenu_shell = f"Software\\Classes\\{submenu_key}\\shell"
+        for reg_name, label, mode, use_pause in modes:
+            verb_path = f"{submenu_shell}\\{reg_name}"
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, verb_path) as key:
+                winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, label)
 
-    for reg_name, label, mode, use_pause in _MODES:
-        # Create the verb key
-        verb_path = f"{submenu_shell}\\{reg_name}"
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, verb_path) as key:
-            winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, label)
-
-        # Create the command subkey
-        cmd_path = f"{verb_path}\\command"
-        command = _build_command(python_exe, project_dir, mode, use_pause)
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cmd_path) as key:
-            winreg.SetValue(key, "", winreg.REG_SZ, command)
+            cmd_path = f"{verb_path}\\command"
+            command = _build_command(python_exe, project_dir, mode, use_pause)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cmd_path) as key:
+                winreg.SetValue(key, "", winreg.REG_SZ, command)
 
     # --- Register per-extension shell verb ---
     icon = _icon_path()
-    for ext in extensions:
+    for ext, submenu_key in ([(e, _SUBMENU_SUP) for e in sup_exts] +
+                              [(e, _SUBMENU_CONTAINER) for e in container_exts]):
         verb_path = (f"Software\\Classes\\SystemFileAssociations"
                      f"\\{ext}\\shell\\{_MENU_NAME}")
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, verb_path) as key:
             winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, _MENU_NAME)
             winreg.SetValueEx(key, "Icon", 0, winreg.REG_SZ, icon)
             winreg.SetValueEx(key, "ExtendedSubCommandsKey", 0,
-                              winreg.REG_SZ, _SUBMENU_KEY)
+                              winreg.REG_SZ, submenu_key)
 
     _notify_shell()
 
-    ext_list = " ".join(extensions)
-    print(f"{success('Registered')} context menu for {len(extensions)} file types:")
-    print(f"  {ext_list}")
+    all_exts = " ".join(sorted(sup_exts + container_exts))
+    print(f"{success('Registered')} context menu for "
+          f"{len(sup_exts) + len(container_exts)} file types:")
+    print(f"  {all_exts}")
     print()
-    print("Right-click any of these file types to see the ProofPGS submenu:")
-    for _, label, _, _ in _MODES:
+    print(f"Subtitle files ({' '.join(sup_exts)}):")
+    for _, label, _, _ in _SUP_MODES:
+        print(f"  - {label}")
+    print(f"Container files ({' '.join(container_exts)}):")
+    for _, label, _, _ in _CONTAINER_MODES:
         print(f"  - {label}")
     print()
     print(dim("Note: On Windows 11, right-click and choose 'Show more options' "
@@ -180,9 +195,15 @@ def uninstall():
 
     removed = 0
 
-    # --- Remove shared submenu ---
-    submenu_path = f"Software\\Classes\\{_SUBMENU_KEY}"
-    if _delete_key_tree(winreg.HKEY_CURRENT_USER, submenu_path):
+    # --- Remove shared submenus ---
+    for submenu_key in (_SUBMENU_SUP, _SUBMENU_CONTAINER):
+        submenu_path = f"Software\\Classes\\{submenu_key}"
+        if _delete_key_tree(winreg.HKEY_CURRENT_USER, submenu_path):
+            removed += 1
+
+    # --- Clean up legacy single submenu from older installs ---
+    legacy_path = "Software\\Classes\\ProofPGS.SubMenu"
+    if _delete_key_tree(winreg.HKEY_CURRENT_USER, legacy_path):
         removed += 1
 
     # --- Remove per-extension verbs ---
