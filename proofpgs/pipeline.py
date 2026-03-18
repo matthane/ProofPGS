@@ -281,8 +281,8 @@ def _print_track_listing(tracks, video_range=None):
     has_bailed = False
 
     # --- Pass 1: build plain-text columns for width calculation ---
-    rows = []  # (index_col, stream_col, detail_col, badge_plain, badge_styled,
-               #  mismatch_styled)
+    rows = []  # (index_col, stream_col, detail_col, count_plain,
+               #  badge_plain, badge_styled, mismatch_styled)
 
     for ti, t in enumerate(tracks):
         index_col = f"[{ti}]"
@@ -297,6 +297,16 @@ def _print_track_listing(tracks, video_range=None):
         if flags:
             parts.append(f"[{', '.join(flags)}]")
         detail_col = "  ".join(parts)
+
+        # Approximate subtitle count from MKV display-set metadata.
+        # Each visible subtitle typically produces 2 display sets
+        # (one to show, one to clear), so num_frames / 2 ≈ subtitle count.
+        num_frames = t.get("num_frames")
+        if num_frames and num_frames > 0:
+            approx_subs = max(1, num_frames // 2)
+            count_plain = f"~{approx_subs:,} subs"
+        else:
+            count_plain = ""
 
         if t.get("analysis_bailed"):
             has_bailed = True
@@ -326,13 +336,14 @@ def _print_track_listing(tracks, video_range=None):
                 and det["verdict"] != video_range):
             mismatch_styled = f"  {badge_mismatch('Dynamic range mismatch')}"
 
-        rows.append((index_col, stream_col, detail_col,
+        rows.append((index_col, stream_col, detail_col, count_plain,
                      badge_plain, badge_styled, mismatch_styled))
 
     # --- Compute column widths ---
     idx_w    = max((len(r[0]) for r in rows), default=0)
     stream_w = max((len(r[1]) for r in rows), default=0)
     detail_w = max((len(r[2]) for r in rows), default=0)
+    count_w  = max((len(r[3]) for r in rows), default=0)
 
     # --- Pass 2: print aligned ---
     print(f"{info('Found')} {bold(str(len(tracks)))} PGS subtitle track(s):")
@@ -340,13 +351,25 @@ def _print_track_listing(tracks, video_range=None):
         range_label = video_range.upper()
         range_styled = badge_hdr(range_label) if video_range == "hdr" else badge_sdr(range_label)
         print(f"  {dim('Video stream:')} {range_styled}")
-    for (index_col, stream_col, detail_col,
+    for (index_col, stream_col, detail_col, count_plain,
          badge_plain, badge_styled, mismatch_styled) in rows:
         idx_part = bold(index_col.ljust(idx_w))
         stream_part = dim(stream_col.ljust(stream_w))
-        if badge_plain:
+        has_trailing = badge_plain or count_plain
+        if has_trailing:
             detail_part = detail_col.ljust(detail_w)
-            print(f"  {idx_part}  {stream_part}  {detail_part}  {badge_styled}{mismatch_styled}")
+            if count_w:
+                if count_plain:
+                    count_part = f"  {dim(count_plain.rjust(count_w))}"
+                else:
+                    count_part = f"  {' ' * count_w}"
+            else:
+                count_part = ""
+            if badge_plain:
+                badge_part = f"  {badge_styled}"
+            else:
+                badge_part = ""
+            print(f"  {idx_part}  {stream_part}  {detail_part}{count_part}{badge_part}{mismatch_styled}")
         else:
             print(f"  {idx_part}  {stream_part}  {detail_col}")
 
