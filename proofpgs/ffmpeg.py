@@ -78,13 +78,19 @@ def probe_pgs_tracks(ffprobe_path: str, input_path: str) -> tuple:
         # Display-set count from container metadata.  In Matroska each
         # subtitle "frame" is one complete display set, so this value
         # equals the total number of display sets (content + clears).
-        # The NUMBER_OF_FRAMES tag is written by mkvmerge; nb_frames
-        # is the generic ffprobe field (often absent for subtitles).
+        # mkvmerge writes the tag as NUMBER_OF_FRAMES; MakeMKV writes
+        # it as NUMBER_OF_FRAMES-eng (language-suffixed).  Check both
+        # the plain key and any suffixed variant.
         num_frames = None
-        nf_tag = tags.get("NUMBER_OF_FRAMES")
-        if nf_tag is not None:
+        nf_val = tags.get("NUMBER_OF_FRAMES")
+        if nf_val is None:
+            for key, val in tags.items():
+                if key.startswith("NUMBER_OF_FRAMES-"):
+                    nf_val = val
+                    break
+        if nf_val is not None:
             try:
-                nf = int(nf_tag)
+                nf = int(nf_val)
                 if nf > 0:
                     num_frames = nf
             except (ValueError, TypeError):
