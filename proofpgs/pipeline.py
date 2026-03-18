@@ -668,7 +668,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     from .mkv import extract_pgs_tracks_mkv
                     sup_paths = extract_pgs_tracks_mkv(
                         input_path, selected_track_list,
-                        temp_dir, duration_s
+                        temp_dir,
                     )
                 except Exception as exc:
                     sup_paths = None

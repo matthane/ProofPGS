@@ -577,34 +577,7 @@ def _block_payload_to_sup(pts_90khz: int, payload: bytes) -> bytes:
 # Parallel cluster reading
 # ---------------------------------------------------------------------------
 
-_PARALLEL_WORKERS = 32
-
-
-def _read_cluster_worker(args):
-    """Worker function for parallel cluster reading.
-
-    Opens its own file handle (avoids seek contention between threads),
-    parses one cluster, decompresses matching blocks, and returns a list
-    of ``(track_num, pts_90khz, decompressed_payload)`` tuples.
-    """
-    input_path, cluster_pos, target_track_nums, ts_scale_ns, track_compression = args
-    # Thread-local file handle — each worker opens the file independently
-    # so seeks in one thread don't interfere with another.
-    tls = _read_cluster_worker._tls
-    key = f"f_{id(threading.current_thread())}"
-    f = getattr(tls, key, None)
-    if f is None or f.closed:
-        f = open(input_path, "rb", buffering=262144)
-        setattr(tls, key, f)
-
-    blocks = _parse_cluster_blocks(f, cluster_pos, target_track_nums, ts_scale_ns)
-    return [
-        (tn, pts, _decompress_payload(payload, track_compression.get(tn)))
-        for tn, pts, payload in blocks
-    ]
-
-
-_read_cluster_worker._tls = threading.local()
+_PARALLEL_WORKERS = 16
 
 
 def _get_thread_fh(input_path: str):
@@ -619,6 +592,23 @@ def _get_thread_fh(input_path: str):
 
 
 _get_thread_fh._tls = threading.local()
+
+
+def _read_cluster_worker(args):
+    """Worker function for parallel cluster reading.
+
+    Opens its own file handle (avoids seek contention between threads),
+    parses one cluster, decompresses matching blocks, and returns a list
+    of ``(track_num, pts_90khz, decompressed_payload)`` tuples.
+    """
+    input_path, cluster_pos, target_track_nums, ts_scale_ns, track_compression = args
+    f = _get_thread_fh(input_path)
+
+    blocks = _parse_cluster_blocks(f, cluster_pos, target_track_nums, ts_scale_ns)
+    return [
+        (tn, pts, _decompress_payload(payload, track_compression.get(tn)))
+        for tn, pts, payload in blocks
+    ]
 
 
 def _read_cluster_group_direct(args):
