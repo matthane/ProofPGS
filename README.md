@@ -158,11 +158,13 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ## Performance
 
-**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks in a single FFmpeg pass under a 10-second wallclock budget. It seeks to the middle of the file for representative content and extracts samples from all tracks simultaneously. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates FFmpeg early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
+**Direct MKV extraction:** For MKV files, ProofPGS includes a custom EBML/Matroska parser that reads the Cues index built into the container to locate subtitle blocks by their exact file positions. Instead of scanning the entire file sequentially (40 GB+ for UHD Blu-ray remuxes), it seeks directly to only the clusters and blocks containing PGS data — typically reading just a few MB out of tens of GB. This requires the MKV to have its subtitle tracks indexed in the Cues element. In practice, MKVs using Matroska version 4 (the current default for modern muxing tools) typically include subtitle Cues, while older version 2 files often only index video. Files without subtitle Cues fall back to FFmpeg extraction automatically. When the Cues also contain `CueRelativePosition` entries, an even faster path is available: individual subtitle blocks are read at their exact byte offsets without parsing the surrounding cluster data at all. Analysis, streaming, and batch extraction all benefit from this — a `Subtitle index detected` message in the output confirms the fast path is active.
 
-**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), FFmpeg pipes each track directly to the parser and is terminated as soon as enough subtitles are collected. No temp files are created. Samples are taken from the **middle of the file** for representative content. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
+**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks under a 10-second wallclock budget. For MKV files with subtitle Cues, direct block reads are fast enough that no budget is needed. For M2TS files or MKV files without subtitle Cues, a single FFmpeg pass extracts samples from all tracks simultaneously. It seeks to the middle of the file for representative content. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates extraction early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
 
-**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), a single FFmpeg pass extracts all selected tracks to temporary files, then each is decoded in turn.
+**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), MKV files use direct block reads while M2TS files use FFmpeg piping (no temp files). Samples are taken from the **middle of the file** for representative content. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
+
+**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), MKV files use parallel direct I/O via the Cues index. M2TS files use a single FFmpeg pass to extract all selected tracks to temporary files, then each is decoded in turn. Both paths fall back to FFmpeg automatically on any parse error.
 
 **Multi-threaded rendering:** PNG rendering uses multiple threads by default (auto-detected, up to 8). Override with `--threads`.
 
@@ -182,6 +184,7 @@ proofpgs/
   color.py            # Colour-space math and palette decoding (HDR & SDR)
   renderer.py         # Display set rendering and PNG output
   ffmpeg.py           # FFmpeg/ffprobe integration
+  mkv.py              # Direct MKV extraction via EBML/Cues parsing
   interactive.py      # Interactive track and count selection
   pipeline.py         # High-level orchestration
   shellmenu.py        # Windows Explorer context menu integration
