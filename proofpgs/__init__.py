@@ -1,6 +1,6 @@
 """ProofPGS — PGS subtitle decoder with HDR (UHD BD) and SDR (BD) support."""
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 from .parser import read_sup, read_sup_streaming, ds_has_content
 from .renderer import render_ds, crop_to_content
