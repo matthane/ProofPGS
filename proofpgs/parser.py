@@ -1,47 +1,10 @@
-"""PGS binary format parsing: .sup file reading, segment parsers, RLE decoder."""
+"""PGS segment parsers and RLE decoder."""
 
 import struct
 
 import numpy as np
 
-from .constants import SEG_END, SEG_ODS, format_time
-from .style import warn
-
-
-# ---------------------------------------------------------------------------
-# .sup file / stream readers
-# ---------------------------------------------------------------------------
-
-def read_sup(path: str) -> list:
-    """Parse a .sup file into a list of Display Sets.
-    Each DS is a list of {type, pts, payload} dicts.
-    """
-    with open(path, "rb") as f:
-        data = f.read()
-
-    pos = 0
-    display_sets = []
-    current_ds = []
-
-    while pos + 13 <= len(data):
-        if data[pos:pos + 2] != b"PG":
-            print(f"{warn('[warn]')} Bad magic at {pos:#010x}, stopping.")
-            break
-
-        pts      = struct.unpack(">I", data[pos + 2:pos + 6])[0]
-        seg_type = data[pos + 10]
-        seg_size = struct.unpack(">H", data[pos + 11:pos + 13])[0]
-        payload  = data[pos + 13: pos + 13 + seg_size]
-
-        current_ds.append({"type": seg_type, "pts": pts, "payload": payload})
-
-        if seg_type == SEG_END:
-            display_sets.append(current_ds)
-            current_ds = []
-
-        pos += 13 + seg_size
-
-    return display_sets
+from .constants import SEG_ODS
 
 
 def ds_has_content(ds: list) -> bool:
@@ -53,82 +16,6 @@ def ds_has_content(ds: list) -> bool:
     for at least one Object Definition Segment (ODS / 0x15).
     """
     return any(seg["type"] == SEG_ODS for seg in ds)
-
-
-def read_sup_streaming(stream, max_ds: int = None) -> list:
-    """Parse PGS segments incrementally from a binary stream.
-
-    When reading from an FFmpeg pipe, stopping early causes FFmpeg to
-    receive a broken-pipe signal and exit — so it only reads through the
-    container file as far as needed.  This is the key optimisation: if
-    the user only wants the first 10 subtitles, FFmpeg stops after
-    reaching the 10th subtitle's position in the file.
-
-    Only display sets that contain actual subtitle content (ODS segments)
-    count toward max_ds.  "Clear" display sets (used to hide the previous
-    subtitle) are collected but do not count, so max_ds=10 yields exactly
-    10 renderable subtitles.
-
-    Args:
-        stream:  A binary readable (e.g. subprocess stdout pipe).
-        max_ds:  Stop after collecting this many *content* display sets.
-                 None means read everything.
-
-    Returns:
-        List of display sets (same format as read_sup).
-    """
-    display_sets = []
-    current_ds = []
-    content_count = 0
-    showed_progress = False
-
-    while True:
-        header = stream.read(13)
-        if len(header) < 13:
-            break
-
-        if header[0:2] != b"PG":
-            print(f"{warn('[warn]')} Bad magic in stream, stopping.")
-            break
-
-        pts      = struct.unpack(">I", header[2:6])[0]
-        seg_type = header[10]
-        seg_size = struct.unpack(">H", header[11:13])[0]
-
-        payload = stream.read(seg_size) if seg_size > 0 else b""
-        if len(payload) < seg_size:
-            break
-
-        current_ds.append({"type": seg_type, "pts": pts, "payload": payload})
-
-        if seg_type == SEG_END:
-            display_sets.append(current_ds)
-            has_content = ds_has_content(current_ds)
-            current_ds = []
-            if has_content:
-                content_count += 1
-            # Show position in the file so user knows FFmpeg is still
-            # working — especially important for sparse forced tracks
-            # where subtitles are spread across the whole movie.
-            pos_s = pts / 90_000.0
-            pos_str = format_time(pos_s)
-            if max_ds is not None:
-                print(f"\r  Streaming: {content_count}/{max_ds} subtitles "
-                      f"(at {pos_str} in file)   ",
-                      end="", flush=True)
-                showed_progress = True
-                if content_count >= max_ds:
-                    break
-            else:
-                if content_count % 50 == 0 and content_count > 0:
-                    print(f"\r  Streaming: {content_count} subtitles "
-                          f"(at {pos_str} in file)   ",
-                          end="", flush=True)
-                    showed_progress = True
-
-    if showed_progress:
-        print()  # newline after progress
-    return display_sets
 
 
 def pts_to_ms(pts: int) -> float:
