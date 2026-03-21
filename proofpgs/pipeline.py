@@ -37,8 +37,14 @@ def _resolve_auto_mode(detection: dict) -> str:
 
 def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                     preview_cache, budget=None):
-    """Single-pass analysis: stream samples for all requested tracks at
-    once via libpgs, then run detection on each.
+    """Multi-pass analysis: stream tracks via libpgs, restarting with
+    fewer tracks as each one reaches a conclusive detection verdict.
+
+    Each pass streams the remaining unvalidated tracks.  When a track's
+    detection becomes conclusive, a short grace period allows co-located
+    language tracks at the same timestamps to also conclude before
+    restarting libpgs with only the remaining tracks — letting it use
+    MKV Cues to skip past already-validated data.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -47,50 +53,109 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
     if not track_indices:
         return
 
-    extract_tracks = [tracks[ti] for ti in track_indices]
+    num_tracks = len(track_indices)
 
     # Live elapsed-time display on the "Analyzing" line.
     _timer_stop = threading.Event()
     _timer_t0 = time.monotonic()
-    _timer_label = f"  {info('Analyzing')} {len(extract_tracks)} PGS track(s)..."
     _is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    def _print_timer_label(num_validated=0):
+        label = f"  {info('Analyzing')} {num_tracks} PGS track(s)..."
+        if num_validated > 0:
+            label += f" {dim(f'({num_validated}/{num_tracks} validated)')}"
+        return label
+
+    _timer_label = [_print_timer_label()]  # mutable for thread access
 
     def _tick():
         while not _timer_stop.wait(0.5):
             if _is_tty:
                 e = time.monotonic() - _timer_t0
-                print(f"\r{_timer_label} {dim(f'{e:.0f}s')}", end="", flush=True)
+                print(f"\r{_timer_label[0]} {dim(f'{e:.0f}s')}", end="", flush=True)
 
     _timer_thread = threading.Thread(target=_tick, daemon=True)
-    print(_timer_label, end="", flush=True)
+    print(_timer_label[0], end="", flush=True)
     _timer_thread.start()
 
     try:
-        # Content-based watchdog: stop streaming as soon as all tracks
-        # have conclusive detection.
-        def ready_check(track_data):
-            for ti in track_indices:
-                t = tracks[ti]
-                tid = t["track_id"]
-                ds = track_data.get(tid, [])
-                if not ds:
-                    return False
-                det = detect_from_palettes(ds)
-                if det["verdict"] is None:
-                    return False
-            return True
+        remaining_tids = [tracks[ti]["track_id"] for ti in track_indices]
+        all_data = {}       # track_id -> accumulated display sets
+        concluded = {}      # track_id -> detection result (cached)
 
-        track_data = stream_all_tracks(
-            libpgs_path, input_path,
-            max_ds_per_track=ANALYSIS_MAX_DS,
-            deadline=budget.deadline() if budget else None,
-            ready_check=ready_check,
-        )
+        _debug = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
+        _pass_num = 0
 
+        while remaining_tids:
+            if budget and budget.exhausted():
+                if _debug:
+                    print(f"\n  [DEBUG] Budget exhausted, stopping",
+                          flush=True)
+                break
+
+            _pass_num += 1
+            if _debug:
+                elapsed = time.monotonic() - _timer_t0
+                print(f"\n  [DEBUG] Pass {_pass_num}: streaming "
+                      f"{len(remaining_tids)} track(s): "
+                      f"{remaining_tids} ({elapsed:.2f}s elapsed)",
+                      flush=True)
+
+            def track_check(tid, display_sets):
+                if tid in concluded:
+                    return True
+                det = detect_from_palettes(display_sets)
+                if det["verdict"] is not None:
+                    concluded[tid] = det
+                    _timer_label[0] = _print_timer_label(len(concluded))
+                    if _debug:
+                        elapsed = time.monotonic() - _timer_t0
+                        print(f"\n  [DEBUG] Track {tid} concluded: "
+                              f"{det['verdict']} ({elapsed:.2f}s elapsed)",
+                              flush=True)
+                    return True
+                return False
+
+            track_data, done_tids = stream_all_tracks(
+                libpgs_path, input_path,
+                track_ids=remaining_tids,
+                max_ds_per_track=ANALYSIS_MAX_DS,
+                deadline=budget.deadline() if budget else None,
+                track_check=track_check,
+            )
+
+            if _debug:
+                elapsed = time.monotonic() - _timer_t0
+                ds_counts = {tid: len(ds) for tid, ds in track_data.items()
+                             if ds}
+                print(f"  [DEBUG] Pass {_pass_num} ended: "
+                      f"concluded={done_tids}, "
+                      f"ds_counts={ds_counts} ({elapsed:.2f}s elapsed)",
+                      flush=True)
+
+            # Merge new data into accumulator.
+            for tid, ds in track_data.items():
+                all_data.setdefault(tid, []).extend(ds)
+
+            # Remove validated tracks from remaining.
+            remaining_tids = [tid for tid in remaining_tids
+                              if tid not in concluded]
+
+            # If no tracks concluded in this pass and we have remaining
+            # tracks, they likely have no data yet — stop to avoid an
+            # infinite loop (they'll be marked as bailed below).
+            if not done_tids and remaining_tids:
+                if _debug:
+                    print(f"  [DEBUG] No tracks concluded in pass "
+                          f"{_pass_num}, {len(remaining_tids)} "
+                          f"remaining — bailing", flush=True)
+                break
+
+        # --- Post-loop: assign detection results and cache data ---
         for ti in track_indices:
             t = tracks[ti]
             tid = t["track_id"]
-            ds = track_data.get(tid, [])
+            ds = all_data.get(tid, [])
 
             # Cap to ANALYSIS_MAX_DS display sets.
             if len(ds) > ANALYSIS_MAX_DS:
@@ -99,8 +164,10 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
             preview_cache[ti] = ds
             content_count = sum(1 for d in ds if ds_has_content(d))
 
-            # --- Color space detection ---
-            if ds:
+            # Use cached detection if available, otherwise run fresh.
+            if tid in concluded:
+                t["detection"] = concluded[tid]
+            elif ds:
                 t["detection"] = detect_from_palettes(ds)
             else:
                 t["detection"] = {
@@ -123,7 +190,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
             pass
         elapsed = time.monotonic() - _timer_t0
         if _is_tty:
-            print(f"\r{_timer_label} {dim(f'{elapsed:.1f}s')}")
+            print(f"\r{_timer_label[0]} {dim(f'{elapsed:.1f}s')}")
         else:
             print(f" {dim(f'{elapsed:.1f}s')}")
 

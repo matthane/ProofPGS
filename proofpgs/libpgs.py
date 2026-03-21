@@ -14,9 +14,11 @@ import subprocess
 import sys
 import time
 
-from .constants import format_time
+from .constants import format_time, ANALYSIS_RESTART_GRACE_S
 from .parser import ds_has_content
 from .style import error
+
+_DEBUG = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
 
 
 # ---------------------------------------------------------------------------
@@ -220,31 +222,45 @@ def stream_file(libpgs_path: str, input_path: str,
 # ---------------------------------------------------------------------------
 
 def stream_all_tracks(libpgs_path: str, input_path: str,
+                      track_ids: list = None,
                       max_ds_per_track: int = None,
                       deadline: float = None,
-                      ready_check=None) -> dict:
-    """Stream all tracks from a single libpgs invocation, demultiplexed.
+                      track_check=None) -> tuple:
+    """Stream tracks from a single libpgs invocation, demultiplexed.
 
-    Reads NDJSON lines from ``libpgs stream <file>`` (no ``-t`` flag)
+    Reads NDJSON lines from ``libpgs stream <file> [-t id,...]``
     and groups display sets by ``track_id``.
+
+    When *track_check* marks a track as concluded and other tracks
+    remain, a short grace period (``ANALYSIS_RESTART_GRACE_S``)
+    allows co-located language tracks at the same timestamps to also
+    conclude before signalling the caller to restart with fewer tracks.
 
     Args:
         libpgs_path:      Path to the libpgs binary.
         input_path:       Path to container file.
+        track_ids:        List of track IDs to stream.  Builds
+                          ``-t id1,id2,...``.  ``None`` = all tracks.
         max_ds_per_track: Stop collecting for a track after this many
                           *content* display sets. None = no limit.
         deadline:         Monotonic timestamp for early termination.
                           None = no deadline.
-        ready_check:      Callback ``fn(track_data: dict) -> bool``.
-                          Called after each display set; if it returns
-                          True, streaming stops. ``track_data`` is the
-                          partial result dict ``{track_id: [ds, ...]}``.
+        track_check:      Callback ``fn(track_id, display_sets) -> bool``.
+                          Called after each new *content* display set for
+                          that track.  Return True to mark the track as
+                          concluded (no more data collected for it).
 
     Returns:
-        ``{track_id: [display_sets]}`` where each display set is in
-        internal format.
+        ``(track_data, concluded_tids)`` where *track_data* is
+        ``{track_id: [display_sets]}`` and *concluded_tids* is the set
+        of track IDs that were marked concluded by *track_check*.
     """
     cmd = [libpgs_path, "stream", input_path]
+    if track_ids:
+        cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
+
+    if _DEBUG:
+        print(f"  [DEBUG] libpgs cmd: {' '.join(cmd)}", flush=True)
 
     proc = subprocess.Popen(
         cmd,
@@ -254,8 +270,10 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
 
     track_data = {}         # track_id -> list of display sets
     content_counts = {}     # track_id -> int (content DS count)
-    completed_tracks = set()  # tracks that have reached max_ds
+    completed_tracks = set()  # tracks done (concluded or hit cap)
+    concluded_tids = set()  # tracks concluded by track_check
     last_check = 0.0
+    last_concluded_at = None  # monotonic time of last track_check conclusion
 
     try:
         for line in proc.stdout:
@@ -271,6 +289,10 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                     tid = t["track_id"]
                     track_data.setdefault(tid, [])
                     content_counts.setdefault(tid, 0)
+                if _DEBUG:
+                    print(f"  [DEBUG] tracks header reports "
+                          f"{len(track_data)} track(s): "
+                          f"{sorted(track_data.keys())}", flush=True)
                 continue
 
             if obj.get("type") != "display_set":
@@ -280,10 +302,21 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             if tid is None:
                 continue
 
-            # Skip tracks that already reached their limit
+            # Skip tracks that are already done
             if tid in completed_tracks:
-                # If all tracks are done, stop entirely
-                if max_ds_per_track is not None and len(completed_tracks) >= len(track_data):
+                if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
+                    break
+                # Grace-period restart: concluded tracks exist but
+                # unconcluded tracks remain — check if we should
+                # restart with fewer tracks.
+                if (last_concluded_at is not None
+                        and time.monotonic() - last_concluded_at
+                            >= ANALYSIS_RESTART_GRACE_S):
+                    if _DEBUG:
+                        print(f"\n  [DEBUG] Grace period expired "
+                              f"(on skip), "
+                              f"{len(completed_tracks)}/{len(track_data)}"
+                              f" tracks done — restarting", flush=True)
                     break
                 continue
 
@@ -296,6 +329,16 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
 
             if ds_has_content(ds):
                 content_counts[tid] += 1
+
+                # Per-track detection check
+                if track_check is not None and track_check(tid, track_data[tid]):
+                    completed_tracks.add(tid)
+                    concluded_tids.add(tid)
+                    last_concluded_at = time.monotonic()
+                    if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
+                        break
+
+                # Safety cap
                 if max_ds_per_track is not None and content_counts[tid] >= max_ds_per_track:
                     completed_tracks.add(tid)
                     if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
@@ -306,9 +349,22 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             if now - last_check >= 1.0:
                 last_check = now
                 if deadline is not None and now >= deadline:
+                    if _DEBUG:
+                        print(f"\n  [DEBUG] Deadline reached, breaking",
+                              flush=True)
                     break
-                if ready_check is not None and ready_check(track_data):
-                    break
+
+            # Grace-period restart: if tracks have concluded and the
+            # grace period has elapsed, break so the caller can restart
+            # libpgs with only the remaining tracks.
+            if (last_concluded_at is not None
+                    and len(completed_tracks) < len(track_data)
+                    and time.monotonic() - last_concluded_at >= ANALYSIS_RESTART_GRACE_S):
+                if _DEBUG:
+                    print(f"\n  [DEBUG] Grace period expired, "
+                          f"{len(completed_tracks)}/{len(track_data)} "
+                          f"tracks done — restarting", flush=True)
+                break
 
     finally:
         try:
@@ -319,4 +375,4 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             proc.kill()
         proc.wait()
 
-    return track_data
+    return track_data, concluded_tids

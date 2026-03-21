@@ -45,6 +45,13 @@ ANALYSIS_MAX_DS = 125
 # accepts the interactive "cached" default (no additional extraction).
 DEFAULT_INTERACTIVE_COUNT = 10
 
+# Grace period (seconds) after the last track validation before
+# restarting libpgs with remaining tracks.  Co-located language tracks
+# at the same timestamps produce a burst of display sets in
+# microseconds (same MKV cluster); 50 ms is generous while being
+# negligible across many restarts.
+ANALYSIS_RESTART_GRACE_S = 0.05
+
 
 class Budget:
     """Lightweight wallclock budget tracker using time.monotonic()."""
