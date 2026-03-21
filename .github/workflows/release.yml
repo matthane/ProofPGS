@@ -88,7 +88,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          version=$(grep -oP '__version__\s*=\s*"\K[^"]+' proofpgs/__init__.py)
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' proofpgs/__init__.py)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Record libpgs provenance
