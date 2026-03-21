@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 from .constants import format_time, ANALYSIS_RESTART_GRACE_S
@@ -268,6 +269,23 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
         stderr=subprocess.DEVNULL,
     )
 
+    # Deadline watchdog: kill the process if we're blocked on I/O past
+    # the deadline.  Without this, slow sources (NAS) can stall the
+    # budget indefinitely because the deadline check inside the read
+    # loop never fires.
+    _watchdog_cancel = threading.Event()
+    if deadline is not None:
+        wait_secs = max(0, deadline - time.monotonic())
+        def _watchdog():
+            if not _watchdog_cancel.wait(wait_secs):
+                if proc.poll() is None:
+                    if _DEBUG:
+                        print(f"\n  [DEBUG] Watchdog killing libpgs "
+                              f"(deadline reached)", flush=True)
+                    proc.kill()
+        _wd_thread = threading.Thread(target=_watchdog, daemon=True)
+        _wd_thread.start()
+
     track_data = {}         # track_id -> list of display sets
     content_counts = {}     # track_id -> int (content DS count)
     completed_tracks = set()  # tracks done (concluded or hit cap)
@@ -367,6 +385,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                 break
 
     finally:
+        _watchdog_cancel.set()
         try:
             proc.stdout.close()
         except Exception:
