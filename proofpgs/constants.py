@@ -59,6 +59,7 @@ class Budget:
     def __init__(self, total_seconds: float):
         self._start = time.monotonic()
         self._total = total_seconds
+        self.limit = total_seconds
 
     def remaining(self) -> float:
         """Seconds left in the budget (clamped >= 0)."""

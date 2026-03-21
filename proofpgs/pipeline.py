@@ -81,6 +81,12 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 e = time.monotonic() - _timer_t0
                 print(f"\r{_timer_label[0]} {dim(f'{e:.0f}s')}", end="", flush=True)
 
+    if has_cues:
+        print(f"  {dim('Subtitle cues available. Using direct extraction.')}")
+    elif budget:
+        print(f"  {dim(f'Subtitle cues not available. Using sequential extraction with {budget.limit:.0f}s timeout.')}")
+    else:
+        print(f"  {dim('Subtitle cues not available. Using sequential extraction.')}")
     _timer_thread = threading.Thread(target=_tick, daemon=True)
     print(_timer_label[0], end="", flush=True)
     _timer_thread.start()
