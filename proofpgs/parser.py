@@ -4,7 +4,48 @@ import struct
 
 import numpy as np
 
-from .constants import SEG_ODS
+from .constants import SEG_ODS, SEG_PDS
+
+
+def rle_used_entries(rle_data: bytes) -> set:
+    """Scan RLE data and return the set of palette entry IDs actually used.
+
+    This is a lightweight alternative to full RLE decoding — it walks the
+    RLE stream collecting colour indices without expanding to a pixel array.
+    Used by detection to filter out palette entries that are defined but
+    never referenced by the bitmap (common in fade-in frames).
+    """
+    used = set()
+    pos = 0
+    n = len(rle_data)
+
+    while pos < n:
+        b1 = rle_data[pos]; pos += 1
+
+        if b1 != 0x00:
+            used.add(b1)
+        else:
+            if pos >= n:
+                break
+            b2 = rle_data[pos]; pos += 1
+
+            if b2 == 0x00:
+                continue  # end-of-line
+            elif b2 & 0x40:
+                # Long run
+                pos += 1  # skip length low byte
+                if b2 & 0x80:
+                    if pos < n:
+                        used.add(rle_data[pos])
+                    pos += 1
+            else:
+                # Short run
+                if b2 & 0x80:
+                    if pos < n:
+                        used.add(rle_data[pos])
+                    pos += 1
+
+    return used
 
 
 def ds_has_content(ds: list) -> bool:
