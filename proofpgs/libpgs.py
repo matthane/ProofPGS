@@ -226,16 +226,21 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                       track_ids: list = None,
                       max_ds_per_track: int = None,
                       deadline: float = None,
-                      track_check=None) -> tuple:
+                      track_check=None,
+                      allow_restart: bool = True) -> tuple:
     """Stream tracks from a single libpgs invocation, demultiplexed.
 
     Reads NDJSON lines from ``libpgs stream <file> [-t id,...]``
     and groups display sets by ``track_id``.
 
-    When *track_check* marks a track as concluded and other tracks
-    remain, a short grace period (``ANALYSIS_RESTART_GRACE_S``)
-    allows co-located language tracks at the same timestamps to also
-    conclude before signalling the caller to restart with fewer tracks.
+    When *allow_restart* is True and *track_check* marks a track as
+    concluded with other tracks remaining, a short grace period
+    (``ANALYSIS_RESTART_GRACE_S``) allows co-located language tracks
+    at the same timestamps to also conclude before signalling the
+    caller to restart with fewer tracks.  When False (e.g. containers
+    without MKV Cues), restarts are suppressed — concluded tracks are
+    simply skipped in the loop and streaming continues until all
+    tracks finish or the deadline/cap is reached.
 
     Args:
         libpgs_path:      Path to the libpgs binary.
@@ -250,6 +255,10 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                           Called after each new *content* display set for
                           that track.  Return True to mark the track as
                           concluded (no more data collected for it).
+        allow_restart:    When True (default), break out of the read loop
+                          after the grace period so the caller can restart
+                          libpgs with fewer tracks (requires MKV Cues).
+                          When False, continue streaming in a single pass.
 
     Returns:
         ``(track_data, concluded_tids)`` where *track_data* is
@@ -327,7 +336,8 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                 # Grace-period restart: concluded tracks exist but
                 # unconcluded tracks remain — check if we should
                 # restart with fewer tracks.
-                if (last_concluded_at is not None
+                if (allow_restart
+                        and last_concluded_at is not None
                         and time.monotonic() - last_concluded_at
                             >= ANALYSIS_RESTART_GRACE_S):
                     if _DEBUG:
@@ -375,7 +385,8 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             # Grace-period restart: if tracks have concluded and the
             # grace period has elapsed, break so the caller can restart
             # libpgs with only the remaining tracks.
-            if (last_concluded_at is not None
+            if (allow_restart
+                    and last_concluded_at is not None
                     and len(completed_tracks) < len(track_data)
                     and time.monotonic() - last_concluded_at >= ANALYSIS_RESTART_GRACE_S):
                 if _DEBUG:

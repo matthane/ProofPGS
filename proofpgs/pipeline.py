@@ -36,15 +36,17 @@ def _resolve_auto_mode(detection: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
-                    preview_cache, budget=None):
+                    preview_cache, budget=None, has_cues=True):
     """Multi-pass analysis: stream tracks via libpgs, restarting with
     fewer tracks as each one reaches a conclusive detection verdict.
 
     Each pass streams the remaining unvalidated tracks.  When a track's
-    detection becomes conclusive, a short grace period allows co-located
-    language tracks at the same timestamps to also conclude before
-    restarting libpgs with only the remaining tracks — letting it use
-    MKV Cues to skip past already-validated data.
+    detection becomes conclusive and *has_cues* is True, a short grace
+    period allows co-located language tracks at the same timestamps to
+    also conclude before restarting libpgs with only the remaining
+    tracks — letting it use MKV Cues to skip past already-validated
+    data.  When *has_cues* is False, restarts are disabled and all
+    tracks are streamed in a single pass.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -122,6 +124,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 max_ds_per_track=ANALYSIS_MAX_DS,
                 deadline=budget.deadline() if budget else None,
                 track_check=track_check,
+                allow_restart=has_cues,
             )
 
             if _debug:
@@ -380,6 +383,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
         return
 
     # Build track dicts from libpgs metadata.
+    # has_cues: if any track lacks cues, disable multi-pass restart
+    # (restarts without cues re-read from the beginning).
+    has_cues = all(t.get("has_cues", True) for t in raw_tracks)
     tracks = []
     for t in raw_tracks:
         tracks.append({
@@ -402,11 +408,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     if mode == "validate":
         _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
-                        preview_cache, budget=None)
+                        preview_cache, budget=None, has_cues=has_cues)
     else:
         _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
                         preview_cache,
-                        budget=Budget(LISTING_BUDGET_S))
+                        budget=Budget(LISTING_BUDGET_S), has_cues=has_cues)
 
     # === Phase 3: Display track listing ===
     has_bailed = _print_track_listing(tracks, video_range=video_range)
@@ -420,7 +426,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 ]
                 _analyze_tracks(tracks, bailed_indices, libpgs_path,
                                 input_path, preview_cache,
-                                budget=None)
+                                budget=None, has_cues=has_cues)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 _print_track_listing(tracks, video_range=video_range)
         return
@@ -449,7 +455,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 ]
                 _analyze_tracks(tracks, bailed_indices, libpgs_path,
                                 input_path, preview_cache,
-                                budget=None)
+                                budget=None, has_cues=has_cues)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 has_bailed = _print_track_listing(tracks, video_range=video_range)
                 continue
