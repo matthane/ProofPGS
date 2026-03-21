@@ -104,6 +104,24 @@ The libpgs adapter sends the subprocess's stderr to `subprocess.DEVNULL`. If std
 
 Add the extension to `CONTAINER_EXTENSIONS` in `constants.py`. Only formats that can carry PGS subtitle streams should be added (currently MKV, MK3D, and M2TS). PGS is an HDMV/Blu-ray spec — only Matroska (`.mkv`/`.mk3d`) and BDAV transport streams (`.m2ts`) properly support it. `.mk3d` is identical to MKV but indicates 3D content. Generic `.ts`, MP4, AVI, and WMV cannot carry PGS. The container format must also be supported by libpgs — check [libpgs](https://github.com/matthane/libpgs) for supported formats.
 
+## Release workflow
+
+`.github/workflows/release.yml` runs when a GitHub Release is published. It builds platform-specific archives (Windows x64, Linux x64, macOS x64, macOS ARM64) that bundle ProofPGS with a libpgs binary compiled from source.
+
+**How it works:**
+1. Resolves the latest tagged release from `matthane/libpgs`
+2. Checks out the libpgs source at that tag and builds it with `cargo build --release` on each platform's native runner
+3. Copies the compiled binary into `proofpgs/bin/`
+4. Reads the version from `__init__.py` and stages a clean release directory (only `proofpgs/`, `LICENSE.txt`, `README.md`, `LICENSES/`, and `BUILD_INFO.txt` — no `.git`, `CLAUDE.md`, `dev/`, etc.)
+5. Generates a Sigstore artifact attestation via `actions/attest-build-provenance@v2` for each archive
+6. Uploads the archives to the GitHub Release
+
+**BUILD_INFO.txt** is included in every release archive with provenance metadata: the libpgs tag and commit hash, the ProofPGS commit SHA, the build target, and a link to the workflow run.
+
+**Artifact attestations** cryptographically link each release archive to the workflow run and source commit that produced it. Users can verify with `gh attestation verify <file> --repo matthane/ProofPGS`.
+
+**To create a release:** Tag a commit (e.g. `v1.2.1`), create a GitHub Release from that tag, and publish it. The workflow handles everything automatically.
+
 ## Colour pipeline reference
 
 **HDR:**

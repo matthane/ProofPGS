@@ -6,12 +6,15 @@ A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles.
 
 Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which PGS subtitle tracks are automatically discovered and extracted via [libpgs](https://github.com/matthane/libpgs).
 
-## Requirements
+## Installation
+
+Download the latest release for your platform from the [Releases](https://github.com/matthane/ProofPGS/releases) page. Each release archive includes ProofPGS and a pre-built [libpgs](https://github.com/matthane/libpgs) binary — no separate download needed.
+
+### Requirements
 
 - Python 3.10+
 - [NumPy](https://pypi.org/project/numpy/)
 - [Pillow](https://pypi.org/project/Pillow/)
-- [libpgs](https://github.com/matthane/libpgs) — bundled in `proofpgs/bin/` (or available on PATH)
 - [FFmpeg](https://ffmpeg.org/) (optional — only needed for the video stream dynamic range mismatch badge)
 
 Install Python dependencies:
@@ -20,7 +23,9 @@ Install Python dependencies:
 pip install numpy pillow
 ```
 
-Place the `libpgs` binary (or `libpgs.exe` on Windows) in `proofpgs/bin/`. ProofPGS will also check your system PATH as a fallback.
+### Running from source
+
+If you prefer to run from a git clone instead of a release archive, you'll need to provide the [libpgs](https://github.com/matthane/libpgs) binary yourself. Place `libpgs` (or `libpgs.exe` on Windows) in `proofpgs/bin/`, or add it to your system PATH.
 
 ## Quick Start
 
@@ -195,4 +200,16 @@ proofpgs/
   style.py            # Terminal styling and color output
 LICENSES/
   OFL.txt             # SIL Open Font License 1.1 (Sora font)
+```
+
+## Build Provenance
+
+Release archives are built entirely in GitHub Actions from auditable source code — no locally-built binaries are uploaded. The libpgs binary included in each release is compiled from the [libpgs source](https://github.com/matthane/libpgs) at its latest tagged release using `cargo build --release` on each platform's native CI runner.
+
+Every release archive includes a `BUILD_INFO.txt` with the exact libpgs tag, commit hash, build target, and a link to the workflow run log. Release artifacts are signed with [Sigstore](https://www.sigstore.dev/) artifact attestations, cryptographically linking each archive to the GitHub Actions workflow and source commit that produced it.
+
+To verify a downloaded release:
+
+```bash
+gh attestation verify ProofPGS-<version>-<platform>.zip --repo matthane/ProofPGS
 ```
