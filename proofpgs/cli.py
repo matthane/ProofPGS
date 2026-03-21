@@ -5,6 +5,7 @@ import os
 import sys
 
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
+from .libpgs import check_libpgs
 from .pipeline import process_sup_file, process_container
 from .style import dim, error, info, success, warn
 
@@ -88,12 +89,14 @@ def _main():
         args.out = os.path.join(os.path.dirname(os.path.abspath(args.input_file)),
                                 f"{stem}_pgs_output")
 
+    libpgs_path = check_libpgs()
     ext = os.path.splitext(args.input_file)[1].lower()
 
     if ext in SUP_EXTENSIONS:
         print(f"{info('Reading:')} {args.input_file}")
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop,
+                                 libpgs_path=libpgs_path,
                                  threads=args.threads,
                                  interactive=True)
         if args.mode not in ("validate", "validate-fast"):
@@ -101,10 +104,12 @@ def _main():
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
+                          libpgs_path=libpgs_path,
                           tracks_arg=args.tracks, threads=args.threads)
     else:
         print(f"{warn('[warn]')} Unrecognised extension '{ext}'. "
               f"Attempting as container file...")
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
+                          libpgs_path=libpgs_path,
                           tracks_arg=args.tracks, threads=args.threads)

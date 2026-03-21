@@ -20,7 +20,6 @@ SEG_END = 0x80  # End of Display Set
 # Recognised file extensions
 SUP_EXTENSIONS = {".sup"}
 CONTAINER_EXTENSIONS = {".mkv", ".mk3d", ".m2ts"}
-MATROSKA_EXTENSIONS = {".mkv", ".mk3d"}
 
 
 def format_time(seconds: float) -> str:
@@ -36,27 +35,22 @@ def format_time(seconds: float) -> str:
 # ---------------------------------------------------------------------------
 
 # Wallclock budget for the track-listing analysis phase (seconds).
-# FFmpeg is killed if analysis takes longer than this.
+# libpgs is killed if analysis takes longer than this.
 LISTING_BUDGET_S = 10.0
 
-# Target display sets for analysis, also used as the per-track FFmpeg
-# packet cap via -frames:s.  In MKV one packet = one DS, so this
-# is passed directly.  In M2TS one packet = one PGS segment (~5
-# per DS), so the caller multiplies by TS_SEGMENTS_PER_DS.
-#
-# More samples improve estimation accuracy but slow down the listing
-# phase — especially for M2TS over network storage where extraction
-# can exceed the LISTING_BUDGET_S wallclock limit.  Can be reduced
-# (e.g. to 50) if analysis speed is more important than accuracy.
+# Target display sets per track for analysis.
 ANALYSIS_MAX_DS = 125
-
-# Typical number of PGS segments per display set in M2TS streams.
-# Used to scale ANALYSIS_MAX_DS for M2TS containers.
-TS_SEGMENTS_PER_DS = 5
 
 # Default number of content display sets to render when the user
 # accepts the interactive "cached" default (no additional extraction).
 DEFAULT_INTERACTIVE_COUNT = 10
+
+# Grace period (seconds) after the last track validation before
+# restarting libpgs with remaining tracks.  Co-located language tracks
+# at the same timestamps produce a burst of display sets in
+# microseconds (same MKV cluster); 50 ms is generous while being
+# negligible across many restarts.
+ANALYSIS_RESTART_GRACE_S = 0.05
 
 
 class Budget:
@@ -65,6 +59,7 @@ class Budget:
     def __init__(self, total_seconds: float):
         self._start = time.monotonic()
         self._total = total_seconds
+        self.limit = total_seconds
 
     def remaining(self) -> float:
         """Seconds left in the budget (clamped >= 0)."""

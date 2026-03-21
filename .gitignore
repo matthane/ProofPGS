@@ -16,3 +16,6 @@ venv/
 .claude/
 
 dev/
+
+proofpgs/bin/*
+!proofpgs/bin/.gitkeep

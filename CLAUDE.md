@@ -14,7 +14,8 @@ python -m proofpgs <input_file> [options]
 
 - Python 3.10+
 - `numpy`, `pillow` — `pip install numpy pillow`
-- FFmpeg / ffprobe on PATH (only needed for container input, not `.sup`)
+- `libpgs` — bundled binary in `proofpgs/bin/` (or on PATH). Handles all PGS file I/O (`.sup`, MKV, M2TS). See [github.com/matthane/libpgs](https://github.com/matthane/libpgs).
+- FFmpeg / ffprobe on PATH (optional — only needed for the video stream dynamic range mismatch badge via `probe_video_range()`)
 
 There is no test suite. Validation is done by visual inspection of the output PNGs.
 
@@ -26,14 +27,16 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `pipeline.py` | High-level orchestration — ties everything together |
 | `color.py` | All colour-space math and palette LUT construction |
 | `detect.py` | SDR/HDR auto-detection via PQ plausibility analysis |
-| `parser.py` | PGS binary parsing, RLE decoding, streaming parser |
+| `parser.py` | PGS segment payload parsers (`parse_pcs`, `parse_pds`, `parse_ods`), RLE decoder, `rle_used_entries()`, `ds_has_content()` |
 | `renderer.py` | Multi-threaded display set rendering and PNG output |
-| `ffmpeg.py` | ffprobe track discovery, streaming and batch extraction |
+| `libpgs.py` | Adapter for the libpgs CLI — subprocess streaming, track discovery, segment conversion |
+| `ffmpeg.py` | ffprobe video range detection (`probe_video_range()`), track folder naming |
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
 | `constants.py` | PQ constants, segment type codes, file extensions, analysis budget (`Budget` class) |
 | `style.py` | Terminal styling helpers (colours, badges, cursor control) |
 | `assets/` | Bundled resources (fonts, icons) — accessed via `Path(__file__).resolve().parent / "assets"` |
+| `bin/` | Bundled libpgs binary (platform-specific, gitignored) |
 
 ## Bundled assets and licenses
 
@@ -60,42 +63,64 @@ Blu-ray SDR content is mastered for BT.1886 (gamma 2.4). PC monitors use sRGB (�
 The UHD BD reference white is 203 nits. Linear light is normalised by dividing by `203/10000 = 0.0203` before clipping or Reinhard tonemapping. This maps reference-white subtitles to sRGB 1.0.
 
 ### Track analysis budget (10s wallclock)
-When listing PGS tracks in a container, the analysis phase (SDR/HDR detection) runs under a **10-second wallclock budget**. A single FFmpeg pass extracts samples from all tracks simultaneously (`-frames:s` packet cap per track, `-flush_packets 1`). Two mechanisms can terminate FFmpeg early: a deadline watchdog kills it when the budget expires, and a content-based watchdog kills it as soon as all tracks have conclusive SDR/HDR detection. Tracks that received enough data are fully analyzed; tracks with too few display sets (sparse subtitles) are marked `analysis_bailed = True` and shown as `[not analyzed — too few samples]` in the listing. The user can press `[v]` to re-analyze bailed tracks without a time limit. `--mode validate` runs without a budget and shows scan progress. `--mode validate-fast` runs under the normal budget but prompts to re-analyze sparse tracks afterward.
+When listing PGS tracks in a container, the analysis phase (SDR/HDR detection) runs under a **10-second wallclock budget**. A single `libpgs stream` pass extracts display sets from all tracks simultaneously via NDJSON streaming. Two mechanisms can terminate libpgs early: a deadline watchdog kills it when the budget expires, and a content-based watchdog kills it as soon as all tracks have conclusive SDR/HDR detection. Tracks that received enough data are fully analyzed; tracks with too few display sets (sparse subtitles) are marked `analysis_bailed = True` and shown as `[not analyzed — too few samples]` in the listing. The user can press `[v]` to re-analyze bailed tracks without a time limit. `--mode validate` runs without a budget and shows scan progress. `--mode validate-fast` runs under the normal budget but prompts to re-analyze sparse tracks afterward.
 
-The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track display-set cap is `ANALYSIS_MAX_DS` (default 125). For transport streams (M2TS/TS), this is multiplied by `TS_SEGMENTS_PER_DS` (default 5) since each PGS segment is a separate packet.
+The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track display-set cap is `ANALYSIS_MAX_DS` (default 125).
 
 ### Extraction starts from the beginning
 Both the analysis extraction and streaming extraction read from the start of the file. The interactive count prompt defaults to up to 10 cached analysis samples (`DEFAULT_INTERACTIVE_COUNT` in `constants.py`), with no additional extraction needed. The user can request a custom count or all subtitles.
 
-### Three extraction strategies
+### Extraction via libpgs
+
+All file I/O goes through the bundled `libpgs` binary, which streams PGS data as NDJSON over a subprocess pipe. No temp files are created — display sets are streamed into memory. The libpgs adapter (`libpgs.py`) handles subprocess management, NDJSON parsing, base64 decoding of segment payloads, and segment type mapping.
 
 | Situation | Strategy |
 |---|---|
-| Interactive default (cached) | Reuses display sets already collected during analysis, capped at `DEFAULT_INTERACTIVE_COUNT` (10). No additional FFmpeg extraction. |
-| `--first N` or custom interactive count | Streaming via pipe — FFmpeg killed once N display sets collected. No temp files. Reuses analysis cache if it already has enough content. |
-| `--tracks all` (no limit) | Batch — single FFmpeg pass extracts all selected tracks to temp `.sup` files, then decoded sequentially. |
+| Interactive default (cached) | Reuses display sets already collected during analysis, capped at `DEFAULT_INTERACTIVE_COUNT` (10). No additional extraction. |
+| `--first N` or custom interactive count | `libpgs stream <file> -t <id>` — pipe closed once N display sets collected. Reuses analysis cache if it already has enough content. |
+| `--tracks all` (no limit) | `libpgs stream <file> -t <id>` per track — full extraction, no limit. |
 
 ### SDR/HDR auto-detection via PQ plausibility analysis
 `--mode auto` (default) detects whether each PGS track was mastered for SDR or HDR by analyzing raw palette entries. Detection and mode resolution are **per-track** — each track is decoded with its own detected color pipeline independently. A container with mixed SDR and HDR tracks (e.g. SDR BD and UHD BD remuxed together) processes each track correctly without falling back to compare mode. Only tracks where detection is genuinely inconclusive fall back to compare. Video stream color metadata is intentionally not used because subtitle tracks may originate from different sources. Per the UHD BD spec (section 3.9), SDR subtitles are always BT.709 Y'CbCr regardless of the video stream's color primaries, while HDR subtitles are BT.2020 ST 2084 Y'CbCr with 8-bit values multiplied by 4 for 10-bit compositing.
 
 Output filenames include the decoded range as a suffix: `ds_0001_1234ms_sdr.png`, `ds_0001_1234ms_hdr.png`, or `ds_0001_1234ms_compare.png`.
 
-**Primary signal: PQ plausibility test.** Each bright palette entry (Y > 50) is decoded YCbCr → R'G'B' using the BT.2020 matrix. The **95th percentile** of unique PQ channel values is used as the representative metric — this requires at least 5% of distinct palette entries to exceed the threshold before triggering the SDR signal, making it robust against outlier glow/gradient/saturated entries that can appear in HDR content (e.g., animated title sequences with complex graphics). If this representative value exceeds the PQ code value for 1000 nits (~0.75), the PQ interpretation implies unrealistic luminance for the bulk of entries, meaning the content is gamma-encoded SDR. If it stays below 0.65 (~400 nits), the PQ interpretation is plausible and the content is HDR. This test is particularly effective for colored text (gold, yellow, cyan) where Y-only thresholds are ambiguous — e.g., SDR gold text at Y=178 gives R'≈0.92 under BT.2020, corresponding to ~4800 nits in PQ (obviously SDR), while genuine HDR text at 203 nits gives R'≈0.58 (~200 nits).
+**Fade-in / ghost entry filtering.** Before analyzing palette entries, detection scans each display set's RLE bitmap via `rle_used_entries()` (a lightweight walker that collects palette entry IDs without expanding to a pixel array). Only palette entries actually referenced by the bitmap are considered. This is critical because PGS fade-in frames define the full palette — including the bright text colour at high alpha — but only reference dim, low-alpha entries in the actual bitmap. Without this filter, a single unreferenced "ghost" palette entry (e.g. Y=200, A=192) could dominate the PQ metric and trigger a false SDR verdict on HDR content. Additionally, entries with alpha < 32 are excluded (`_MIN_ALPHA` in `detect.py`), filtering out anti-aliasing fringe and fade-in ramp entries that are functionally invisible.
+
+**Primary signal: PQ plausibility test.** Each visible, bitmap-referenced palette entry (Y > 50, alpha >= 32) is decoded YCbCr → R'G'B' using the BT.2020 matrix. The **95th percentile** of unique PQ channel values is used as the representative metric — this requires at least 5% of distinct palette entries to exceed the threshold before triggering the SDR signal, making it robust against outlier glow/gradient/saturated entries that can appear in HDR content (e.g., animated title sequences with complex graphics). For small sample sizes (fewer than 20 unique values), the percentile index is clamped to always exclude at least the top unique value, preventing a single outlier from dominating the metric. If this representative value exceeds the PQ code value for 1000 nits (~0.75), the PQ interpretation implies unrealistic luminance for the bulk of entries, meaning the content is gamma-encoded SDR. If it stays below 0.65 (~400 nits), the PQ interpretation is plausible and the content is HDR. This test is particularly effective for colored text (gold, yellow, cyan) where Y-only thresholds are ambiguous — e.g., SDR gold text at Y=178 gives R'≈0.92 under BT.2020, corresponding to ~4800 nits in PQ (obviously SDR), while genuine HDR text at 203 nits gives R'≈0.58 (~200 nits).
 
 **Secondary signals:** Y-value thresholds (≥210 SDR, ≤170 HDR) and achromatic entry analysis (Cb/Cr near 128) handle cases where the PQ test is inconclusive.
 
 ### Dynamic range mismatch badge
-For container inputs, `probe_video_range()` in `ffmpeg.py` runs a separate ffprobe query on video streams to detect the video's dynamic range. It checks `color_transfer` first (`smpte2084`/`arib-std-b67` → HDR, `bt709`/`smpte170m`/etc. → SDR), falls back to `color_primaries` (`bt2020` → HDR), then checks `side_data_list` for a Dolby Vision configuration record (DV Profile 5 and others may lack standard color metadata entirely), then defaults to SDR — because SDR Blu-ray rips almost never carry explicit color metadata, while HDR standards require signaling. Attached pictures (cover art) are skipped. The track listing shows a `Video stream: HDR/SDR` header and appends a `Dynamic range mismatch` badge (amber) to any subtitle track whose palette-based detection verdict differs from the video stream's range. This is **informational only** — it does not affect subtitle processing or detection. Video stream metadata is still intentionally not used for detection itself.
+For container inputs, `probe_video_range()` in `ffmpeg.py` runs a separate ffprobe query on video streams to detect the video's dynamic range. This is the only remaining use of ffprobe — if ffprobe is not on PATH, the mismatch badge is silently skipped. It checks `color_transfer` first (`smpte2084`/`arib-std-b67` → HDR, `bt709`/`smpte170m`/etc. → SDR), falls back to `color_primaries` (`bt2020` → HDR), then checks `side_data_list` for a Dolby Vision configuration record (DV Profile 5 and others may lack standard color metadata entirely), then defaults to SDR — because SDR Blu-ray rips almost never carry explicit color metadata, while HDR standards require signaling. Attached pictures (cover art) are skipped. The track listing shows a `Video stream: HDR/SDR` header and appends a `Dynamic range mismatch` badge (amber) to any subtitle track whose palette-based detection verdict differs from the video stream's range. This is **informational only** — it does not affect subtitle processing or detection. Video stream metadata is still intentionally not used for detection itself.
 
 ### Windows Explorer context menu
 `--install` registers a cascading context menu under `HKCU\Software\Classes` (no admin required). Two shared submenus define the mode entries: `ProofPGS.SupMenu` for `.sup` files and `ProofPGS.ContainerMenu` for container formats (`.mkv`, `.mk3d`, `.m2ts`). `.sup` files get a simple "Validate" entry (direct parsing, no FFmpeg budget), while containers get both "Validate (may be slow)" and "Validate fast (skips sparse tracks)". Per-extension verbs under `SystemFileAssociations\<ext>\shell\ProofPGS` reference the appropriate submenu via `ExtendedSubCommandsKey`. `SystemFileAssociations` is used instead of direct `.ext\shell` so the menu appears regardless of which program owns the file type. The commands embed both the Python interpreter path and the project root directory (via `cd /d`) captured at install time, since the module is not pip-installed. Running `--install` again is idempotent and updates the paths.
 
-### Windows pipe deadlock workaround
-`extract_track_streaming()` sends FFmpeg's stderr to `/dev/null` (on Windows, `subprocess.DEVNULL`). If stderr is inherited and FFmpeg writes enough warnings to fill the 4 KB pipe buffer, it blocks — which stalls stdout while we're blocked reading stdout. Do not remove this.
+### Subprocess pipe deadlock workaround
+The libpgs adapter sends the subprocess's stderr to `subprocess.DEVNULL`. If stderr is inherited and the child process writes enough output to fill the 4 KB pipe buffer, it blocks — which stalls stdout while we're blocked reading stdout. Do not remove this.
 
 ## Adding a new container format
 
-Add the extension to `CONTAINER_EXTENSIONS` in `constants.py`. Only formats that can carry PGS subtitle streams should be added (currently MKV, MK3D, and M2TS). PGS is an HDMV/Blu-ray spec — only Matroska (`.mkv`/`.mk3d`) and BDAV transport streams (`.m2ts`) properly support it. `.mk3d` is identical to MKV but indicates 3D content. Generic `.ts`, MP4, AVI, and WMV cannot carry PGS. The rest of the pipeline uses ffprobe/ffmpeg generically and will handle it automatically.
+Add the extension to `CONTAINER_EXTENSIONS` in `constants.py`. Only formats that can carry PGS subtitle streams should be added (currently MKV, MK3D, and M2TS). PGS is an HDMV/Blu-ray spec — only Matroska (`.mkv`/`.mk3d`) and BDAV transport streams (`.m2ts`) properly support it. `.mk3d` is identical to MKV but indicates 3D content. Generic `.ts`, MP4, AVI, and WMV cannot carry PGS. The container format must also be supported by libpgs — check [libpgs](https://github.com/matthane/libpgs) for supported formats.
+
+## Release workflow
+
+`.github/workflows/release.yml` runs when a GitHub Release is published. It builds platform-specific archives (Windows x64, Linux x64, macOS x64, macOS ARM64) that bundle ProofPGS with a libpgs binary compiled from source.
+
+**How it works:**
+1. Resolves the latest tagged release from `matthane/libpgs`
+2. Checks out the libpgs source at that tag and builds it with `cargo build --release` on each platform's native runner
+3. Copies the compiled binary into `proofpgs/bin/`
+4. Reads the version from `__init__.py` and stages a clean release directory (only `proofpgs/`, `LICENSE.txt`, `README.md`, `LICENSES/`, and `BUILD_INFO.txt` — no `.git`, `CLAUDE.md`, `dev/`, etc.)
+5. Generates a Sigstore artifact attestation via `actions/attest-build-provenance@v2` for each archive
+6. Uploads the archives to the GitHub Release
+
+**BUILD_INFO.txt** is included in every release archive with provenance metadata: the libpgs tag and commit hash, the ProofPGS commit SHA, the build target, and a link to the workflow run.
+
+**Artifact attestations** cryptographically link each release archive to the workflow run and source commit that produced it. Users can verify with `gh attestation verify <file> --repo matthane/ProofPGS`.
+
+**To create a release:** Tag a commit (e.g. `v1.2.1`), create a GitHub Release from that tag, and publish it. The workflow handles everything automatically.
 
 ## Colour pipeline reference
 

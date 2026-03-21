@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  LIBPGS_REPO: matthane/libpgs
+
+jobs:
+  resolve-libpgs:
+    name: Resolve libpgs version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Get latest libpgs release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=$(gh api repos/${{ env.LIBPGS_REPO }}/releases/latest --jq '.tag_name')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Resolved libpgs tag: $tag"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: resolve-libpgs
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            libpgs_bin: libpgs.exe
+            archive_ext: zip
+          - name: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            libpgs_bin: libpgs
+            archive_ext: tar.gz
+          - name: macos-x64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            libpgs_bin: libpgs
+            archive_ext: tar.gz
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            libpgs_bin: libpgs
+            archive_ext: tar.gz
+
+    steps:
+      - name: Checkout ProofPGS
+        uses: actions/checkout@v4
+
+      - name: Checkout libpgs source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.LIBPGS_REPO }}
+          ref: ${{ needs.resolve-libpgs.outputs.tag }}
+          path: _libpgs_src
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build libpgs from source
+        working-directory: _libpgs_src
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy libpgs binary into ProofPGS
+        shell: bash
+        run: |
+          cp "_libpgs_src/target/${{ matrix.target }}/release/${{ matrix.libpgs_bin }}" \
+             "proofpgs/bin/${{ matrix.libpgs_bin }}"
+
+      - name: Read ProofPGS version
+        id: version
+        shell: bash
+        run: |
+          version=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*[\"'\''](.*?)[\"'\'']', open('proofpgs/__init__.py').read()).group(1))")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Record libpgs provenance
+        shell: bash
+        run: |
+          cd _libpgs_src
+          echo "libpgs_tag=${{ needs.resolve-libpgs.outputs.tag }}" >  ../BUILD_INFO.txt
+          echo "libpgs_commit=$(git rev-parse HEAD)"                >> ../BUILD_INFO.txt
+          echo "libpgs_repo=https://github.com/${{ env.LIBPGS_REPO }}" >> ../BUILD_INFO.txt
+          echo "proofpgs_ref=${{ github.sha }}"                     >> ../BUILD_INFO.txt
+          echo "build_runner=${{ matrix.os }}"                      >> ../BUILD_INFO.txt
+          echo "build_target=${{ matrix.target }}"                  >> ../BUILD_INFO.txt
+          echo "workflow_run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> ../BUILD_INFO.txt
+
+      - name: Stage release directory
+        shell: bash
+        run: |
+          pkg="ProofPGS-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          mkdir "$pkg"
+
+          # Copy application files
+          cp -r proofpgs "$pkg/"
+          cp LICENSE.txt "$pkg/"
+          cp README.md   "$pkg/"
+          cp -r LICENSES "$pkg/"
+          cp BUILD_INFO.txt "$pkg/"
+
+          # Clean up files not needed in the release
+          rm -rf "$pkg/proofpgs/__pycache__"
+          rm -rf "$pkg/proofpgs/bin/.gitkeep"
+
+          echo "$pkg" > _pkg_name.txt
+
+      - name: Create archive (zip)
+        if: matrix.archive_ext == 'zip'
+        shell: bash
+        run: |
+          pkg=$(cat _pkg_name.txt)
+          7z a "${pkg}.zip" "$pkg"
+
+      - name: Create archive (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          pkg=$(cat _pkg_name.txt)
+          tar czf "${pkg}.tar.gz" "$pkg"
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ProofPGS-${{ steps.version.outputs.version }}-${{ matrix.name }}.${{ matrix.archive_ext }}
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          pkg=$(cat _pkg_name.txt)
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${pkg}.${{ matrix.archive_ext }}" \
+            --clobber

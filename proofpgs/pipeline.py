@@ -1,74 +1,27 @@
 """High-level orchestration: process .sup files and video containers."""
 
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 
-from .parser import read_sup, ds_has_content
+from .parser import ds_has_content
 from .renderer import process_display_sets
 from .detect import detect_from_palettes, format_detection
-from .ffmpeg import (
-    check_ffmpeg, probe_pgs_tracks, probe_video_range,
-    extract_all_pgs_tracks, build_track_folder_name,
-    extract_track_streaming, extract_analysis_samples,
-)
+from .libpgs import stream_file, discover_tracks, stream_all_tracks
+from .ffmpeg import probe_video_range, build_track_folder_name, check_ffprobe
 from .interactive import (
     select_tracks_interactive, select_count_interactive,
     select_count_interactive_sup, confirm_validate_bailed,
 )
 from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
-                        TS_SEGMENTS_PER_DS, DEFAULT_INTERACTIVE_COUNT,
-                        MATROSKA_EXTENSIONS)
+                        DEFAULT_INTERACTIVE_COUNT)
 from .style import (
     info, warn, error, success, heading, dim, bold,
-    badge_hdr, badge_sdr, badge_compare, badge_unknown, badge_mismatch,
+    badge_hdr, badge_sdr, badge_unknown, badge_mismatch,
     CURSOR_UP_CLEAR,
 )
 
-
-
-def _check_all_detected(paths):
-    """True when every track's temp file has conclusive SDR/HDR detection.
-
-    Called by the content-based watchdog in validate mode to decide when
-    FFmpeg can be killed early.  Reads temp .sup files that FFmpeg is
-    actively writing to — safe because ``-flush_packets 1`` ensures
-    complete PGS segments on disk, and ``read_sup`` discards any
-    incomplete trailing display set.
-    """
-    for p in paths:
-        try:
-            if not os.path.isfile(p) or os.path.getsize(p) == 0:
-                return False
-            ds = read_sup(p)
-            if not ds:
-                return False
-            det = detect_from_palettes(ds)
-            if det["verdict"] is None:
-                return False
-        except Exception:
-            return False
-    return True
-
-
-def _adjust_pts_offset(display_sets, start_time_s):
-    """Subtract container start_time from all segment PTS values.
-
-    Blu-ray M2TS streams have a non-zero initial PTS offset (the transport
-    stream clock doesn't start at zero).  MKV files remuxed from the same
-    disc start at ~0.  Subtracting start_time normalises both so that PTS
-    represents elapsed time from the start of the content.
-    """
-    if not start_time_s or start_time_s <= 0:
-        return
-    offset = int(start_time_s * 90_000)
-    for ds in display_sets:
-        for seg in ds:
-            seg["pts"] = max(0, seg["pts"] - offset)
 
 
 def _resolve_auto_mode(detection: dict) -> str:
@@ -82,10 +35,23 @@ def _resolve_auto_mode(detection: dict) -> str:
 # Analysis helpers
 # ---------------------------------------------------------------------------
 
-def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
-                    preview_cache, budget=None):
-    """Single-pass analysis: extract samples for all requested tracks at
-    once, then run detection on each.
+def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
+                    preview_cache, budget=None, has_cues=True,
+                    reuse_proc=None, reuse_tracks=None):
+    """Multi-pass analysis: stream tracks via libpgs, restarting with
+    fewer tracks as each one reaches a conclusive detection verdict.
+
+    Each pass streams the remaining unvalidated tracks.  When a track's
+    detection becomes conclusive and *has_cues* is True, a short grace
+    period allows co-located language tracks at the same timestamps to
+    also conclude before restarting libpgs with only the remaining
+    tracks — letting it use MKV Cues to skip past already-validated
+    data.  When *has_cues* is False, restarts are disabled and all
+    tracks are streamed in a single pass.
+
+    When *reuse_proc* is provided (a running libpgs subprocess whose
+    tracks header has already been consumed), it is used for the first
+    pass — avoiding a redundant cluster-map build on slow sources.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -94,107 +60,153 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
     if not track_indices:
         return
 
-    extract_tracks = [tracks[ti] for ti in track_indices]
-
-    # M2TS demuxes one PGS segment per packet, while MKV packs a
-    # full display set into each packet.  Scale
-    # the packet cap so both formats yield ~the same number of DS.
-    ext = os.path.splitext(input_path)[1].lower()
-    if ext == ".m2ts":
-        max_packets = ANALYSIS_MAX_DS * TS_SEGMENTS_PER_DS
-    else:
-        max_packets = ANALYSIS_MAX_DS
+    num_tracks = len(track_indices)
 
     # Live elapsed-time display on the "Analyzing" line.
     _timer_stop = threading.Event()
     _timer_t0 = time.monotonic()
-    _timer_label = f"  {info('Analyzing')} {len(extract_tracks)} PGS track(s)..."
     _is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+    def _print_timer_label(num_validated=0):
+        label = f"  {info('Analyzing')} {num_tracks} PGS track(s)..."
+        if num_validated > 0:
+            label += f" {dim(f'({num_validated}/{num_tracks} validated)')}"
+        return label
+
+    _timer_label = [_print_timer_label()]  # mutable for thread access
 
     def _tick():
         while not _timer_stop.wait(0.5):
             if _is_tty:
                 e = time.monotonic() - _timer_t0
-                print(f"\r{_timer_label} {dim(f'{e:.0f}s')}", end="", flush=True)
+                print(f"\r{_timer_label[0]} {dim(f'{e:.0f}s')}", end="", flush=True)
 
+    if has_cues:
+        print(f"  {dim('Subtitle cues available. Using direct extraction.')}")
+    elif budget:
+        print(f"  {dim(f'Subtitle cues not available. Using sequential extraction with {budget.limit:.0f}s timeout.')}")
+    else:
+        print(f"  {dim('Subtitle cues not available. Using sequential extraction.')}")
     _timer_thread = threading.Thread(target=_tick, daemon=True)
-    print(_timer_label, end="", flush=True)
+    print(_timer_label[0], end="", flush=True)
     _timer_thread.start()
 
     try:
-        # Content-based watchdog: kill FFmpeg as soon as all tracks have
-        # conclusive detection.  In budgeted mode the deadline acts as a
-        # fallback for sparse tracks; in validate mode there is no deadline.
-        ready_fn = _check_all_detected
+        remaining_tids = [tracks[ti]["track_id"] for ti in track_indices]
+        all_data = {}       # track_id -> accumulated display sets
+        concluded = {}      # track_id -> detection result (cached)
 
-        # --- Try MKV direct extraction first (Cues-based, no FFmpeg) ---
-        sup_paths = None
-        temp_dir = tempfile.mkdtemp(prefix="pgs_analysis_")
-        try:
-            if ext in MATROSKA_EXTENSIONS:
-                try:
-                    from .mkv import extract_analysis_samples_mkv
-                    sup_paths = extract_analysis_samples_mkv(
-                        input_path, extract_tracks, temp_dir,
-                        max_ds=ANALYSIS_MAX_DS,
-                        ready_check=ready_fn,
-                        deadline=budget.deadline() if budget else None,
-                    )
-                except Exception as exc:
-                    sup_paths = None
-                    print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
+        _debug = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
+        _pass_num = 0
 
-            if sup_paths is None:
-                # FFmpeg fallback (M2TS, MKV without Cues, or parse failure).
-                sup_paths = extract_analysis_samples(
-                    ffmpeg_path, input_path, extract_tracks, temp_dir,
-                    max_packets=max_packets,
-                    deadline=budget.deadline() if budget else None,
-                    ready_check=ready_fn,
-                )
+        while remaining_tids:
+            if budget and budget.exhausted():
+                if _debug:
+                    print(f"\n  [DEBUG] Budget exhausted, stopping",
+                          flush=True)
+                break
 
-            for list_i, ti in enumerate(track_indices):
-                t = tracks[ti]
-                sup_path = sup_paths[list_i]
+            _pass_num += 1
+            if _debug:
+                elapsed = time.monotonic() - _timer_t0
+                print(f"\n  [DEBUG] Pass {_pass_num}: streaming "
+                      f"{len(remaining_tids)} track(s): "
+                      f"{remaining_tids} ({elapsed:.2f}s elapsed)",
+                      flush=True)
 
-                if os.path.isfile(sup_path) and os.path.getsize(sup_path) > 0:
-                    ds = read_sup(sup_path)
-                else:
-                    ds = []
+            def track_check(tid, display_sets):
+                if tid in concluded:
+                    return True
+                det = detect_from_palettes(display_sets)
+                if det["verdict"] is not None:
+                    concluded[tid] = det
+                    _timer_label[0] = _print_timer_label(len(concluded))
+                    if _debug:
+                        elapsed = time.monotonic() - _timer_t0
+                        print(f"\n  [DEBUG] Track {tid} concluded: "
+                              f"{det['verdict']} ({elapsed:.2f}s elapsed)",
+                              flush=True)
+                    return True
+                return False
 
-                # Cap to ANALYSIS_MAX_DS display sets so sample sizes are
-                # consistent across container formats.  For MKV, -frames:s
-                # already limits to this many DS.  For M2TS, the scaled
-                # packet cap may yield slightly more DS (clear DS have
-                # fewer segments), so truncate to keep the sample uniform.
-                if len(ds) > ANALYSIS_MAX_DS:
-                    ds = ds[:ANALYSIS_MAX_DS]
+            # On the first pass, reuse the discover_tracks process if
+            # provided — avoids rebuilding the cluster map on slow I/O.
+            _extra = {}
+            if reuse_proc is not None:
+                _extra["existing_proc"] = reuse_proc
+                _extra["existing_tracks"] = reuse_tracks
+                reuse_proc = None   # only for the first pass
+                reuse_tracks = None
 
-                preview_cache[ti] = ds
-                content_count = sum(1 for d in ds if ds_has_content(d))
+            track_data, done_tids = stream_all_tracks(
+                libpgs_path, input_path,
+                track_ids=remaining_tids,
+                max_ds_per_track=ANALYSIS_MAX_DS,
+                deadline=budget.deadline() if budget else None,
+                track_check=track_check,
+                allow_restart=has_cues,
+                **_extra,
+            )
 
-                # --- Color space detection ---
-                if ds:
-                    t["detection"] = detect_from_palettes(ds)
-                else:
-                    t["detection"] = {
-                        "verdict": None, "confidence": "low",
-                        "max_y": 0, "max_achromatic_y": None,
-                        "max_pq_channel": 0, "num_palettes": 0,
-                    }
+            if _debug:
+                elapsed = time.monotonic() - _timer_t0
+                ds_counts = {tid: len(ds) for tid, ds in track_data.items()
+                             if ds}
+                print(f"  [DEBUG] Pass {_pass_num} ended: "
+                      f"concluded={done_tids}, "
+                      f"ds_counts={ds_counts} ({elapsed:.2f}s elapsed)",
+                      flush=True)
 
-                # --- Bail-out ---
-                t["analysis_bailed"] = (
-                    content_count == 0 and t["detection"]["verdict"] is None
-                )
+            # Merge new data into accumulator.
+            for tid, ds in track_data.items():
+                all_data.setdefault(tid, []).extend(ds)
 
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            # Remove validated tracks from remaining.
+            remaining_tids = [tid for tid in remaining_tids
+                              if tid not in concluded]
+
+            # If no tracks concluded in this pass and we have remaining
+            # tracks, they likely have no data yet — stop to avoid an
+            # infinite loop (they'll be marked as bailed below).
+            if not done_tids and remaining_tids:
+                if _debug:
+                    print(f"  [DEBUG] No tracks concluded in pass "
+                          f"{_pass_num}, {len(remaining_tids)} "
+                          f"remaining — bailing", flush=True)
+                break
+
+        # --- Post-loop: assign detection results and cache data ---
+        for ti in track_indices:
+            t = tracks[ti]
+            tid = t["track_id"]
+            ds = all_data.get(tid, [])
+
+            # Cap to ANALYSIS_MAX_DS display sets.
+            if len(ds) > ANALYSIS_MAX_DS:
+                ds = ds[:ANALYSIS_MAX_DS]
+
+            preview_cache[ti] = ds
+            content_count = sum(1 for d in ds if ds_has_content(d))
+
+            # Use cached detection if available, otherwise run fresh.
+            if tid in concluded:
+                t["detection"] = concluded[tid]
+            elif ds:
+                t["detection"] = detect_from_palettes(ds)
+            else:
+                t["detection"] = {
+                    "verdict": None, "confidence": "low",
+                    "max_y": 0, "max_achromatic_y": None,
+                    "max_pq_channel": 0, "num_palettes": 0,
+                }
+
+            # --- Bail-out ---
+            t["analysis_bailed"] = (
+                content_count == 0 and t["detection"]["verdict"] is None
+            )
 
     finally:
         # Always stop the timer — including on KeyboardInterrupt.
-        # Use a short join timeout and suppress exceptions so a second
-        # ^C during cleanup doesn't produce a traceback.
         _timer_stop.set()
         try:
             _timer_thread.join(timeout=1)
@@ -202,7 +214,7 @@ def _analyze_tracks(tracks, track_indices, ffmpeg_path, input_path,
             pass
         elapsed = time.monotonic() - _timer_t0
         if _is_tty:
-            print(f"\r{_timer_label} {dim(f'{elapsed:.1f}s')}")
+            print(f"\r{_timer_label[0]} {dim(f'{elapsed:.1f}s')}")
         else:
             print(f" {dim(f'{elapsed:.1f}s')}")
 
@@ -236,7 +248,7 @@ def _print_track_listing(tracks, video_range=None):
             parts.append(f"[{', '.join(flags)}]")
         detail_col = "  ".join(parts)
 
-        # Approximate subtitle count from MKV display-set metadata.
+        # Approximate subtitle count from display-set metadata.
         # Each visible subtitle typically produces 2 display sets
         # (one to show, one to clear), so num_frames / 2 ≈ subtitle count.
         num_frames = t.get("num_frames")
@@ -326,14 +338,13 @@ def _print_track_listing(tracks, video_range=None):
 
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      tonemap: str, first, nocrop: bool,
+                     libpgs_path: str = None,
                      input_name: str = None,
                      track_name: str = None,
                      threads: int = None,
-                     start_time_s: float = None,
                      interactive: bool = False) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
-    display_sets = read_sup(sup_path)
-    _adjust_pts_offset(display_sets, start_time_s)
+    display_sets = stream_file(libpgs_path, sup_path)
     total = sum(1 for ds in display_sets if ds_has_content(ds))
     print(f"  {info('Found')} {bold(str(total))} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
@@ -375,57 +386,71 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
 
 def process_container(input_path: str, out_dir: str, mode: str,
                       tonemap: str, first, nocrop: bool,
+                      libpgs_path: str = None,
                       tracks_arg: str = None,
                       threads: int = None) -> None:
     """Extract and decode PGS tracks from a video container.
 
+    All extraction is performed via libpgs streaming — no temp files.
     When a display-set limit is active (--first or interactive default),
-    uses streaming extraction: FFmpeg pipes each track's PGS data to
-    stdout and is terminated early once enough display sets are collected.
-    This avoids reading the entire container file and creates no temp files.
-
-    When processing all display sets, uses batch extraction to temp files
-    (single FFmpeg pass for all selected tracks) for maximum efficiency.
+    the libpgs pipe is closed early once enough display sets are collected.
     """
-    ffmpeg_path, ffprobe_path = check_ffmpeg()
-
+    # === Phase 1: Discover tracks via libpgs ===
     print(f"{info('Probing:')} {input_path}")
-    tracks, duration_s, start_time_s = probe_pgs_tracks(ffprobe_path, input_path)
+    raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
+                                            keep_alive=True)
 
-    if not tracks:
+    if not raw_tracks:
         print(warn("No PGS subtitle tracks found."))
         return
 
-    video_range = probe_video_range(ffprobe_path, input_path)
+    # Build track dicts from libpgs metadata.
+    # has_cues: if any track lacks cues, disable multi-pass restart
+    # (restarts without cues re-read from the beginning).
+    has_cues = all(t.get("has_cues", True) for t in raw_tracks)
+
+    # For files with Cues, we don't need the discover process — a fresh
+    # libpgs invocation with specific track IDs can seek efficiently.
+    # For files without Cues, reuse the process to avoid rebuilding the
+    # cluster map (which can take seconds over NAS).
+    if has_cues and kept_proc is not None:
+        try:
+            kept_proc.stdout.close()
+        except Exception:
+            pass
+        if kept_proc.poll() is None:
+            kept_proc.kill()
+        kept_proc.wait()
+        kept_proc = None
+    tracks = []
+    for t in raw_tracks:
+        tracks.append({
+            "index":      t["track_id"],
+            "track_id":   t["track_id"],
+            "language":   t.get("language") or "und",
+            "title":      t.get("name") or "",
+            "forced":     bool(t.get("flag_forced")),
+            "default":    bool(t.get("flag_default")),
+            "num_frames": t.get("display_set_count"),
+        })
+
+    # Video range detection via ffprobe (advisory only).
+    ffprobe_path = check_ffprobe()
+    video_range = probe_video_range(ffprobe_path, input_path) if ffprobe_path else None
 
     # === Phase 2: Single-pass analysis ===
     preview_cache = {}  # ti -> list of display sets
     all_indices = list(range(len(tracks)))
 
-    # MKV files with subtitle tracks indexed in Cues can be analyzed
-    # via direct per-block reads — fast enough to skip the 10s watchdog.
-    # Everything else (M2TS, MKV without subtitle Cues) needs the budget.
-    ext = os.path.splitext(input_path)[1].lower()
-    has_fast_path = False
-    if ext in MATROSKA_EXTENSIONS:
-        from .mkv import probe_mkv_subtitle_cues
-        has_fast_path = probe_mkv_subtitle_cues(input_path, tracks)
-
-    # Budget logic:
-    #   - MKV with subtitle Cues (fast path): no budget needed
-    #   - validate mode: no budget — run as long as needed
-    #   - Everything else (validate-fast, interactive modes without fast path): 10s watchdog
-    if has_fast_path:
-        print(f"  {dim('Subtitle index detected')}")
-        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        preview_cache, budget=None)
-    elif mode == "validate":
-        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
-                        preview_cache, budget=None)
+    if mode == "validate":
+        _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
+                        preview_cache, budget=None, has_cues=has_cues,
+                        reuse_proc=kept_proc, reuse_tracks=raw_tracks)
     else:
-        _analyze_tracks(tracks, all_indices, ffmpeg_path, input_path,
+        _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
                         preview_cache,
-                        budget=Budget(LISTING_BUDGET_S))
+                        budget=Budget(LISTING_BUDGET_S), has_cues=has_cues,
+                        reuse_proc=kept_proc, reuse_tracks=raw_tracks)
 
     # === Phase 3: Display track listing ===
     has_bailed = _print_track_listing(tracks, video_range=video_range)
@@ -437,9 +462,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     i for i, t in enumerate(tracks)
                     if t.get("analysis_bailed")
                 ]
-                _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
+                _analyze_tracks(tracks, bailed_indices, libpgs_path,
                                 input_path, preview_cache,
-                                budget=None)
+                                budget=None, has_cues=has_cues)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 _print_track_listing(tracks, video_range=video_range)
         return
@@ -466,9 +491,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     i for i, t in enumerate(tracks)
                     if t.get("analysis_bailed")
                 ]
-                _analyze_tracks(tracks, bailed_indices, ffmpeg_path,
+                _analyze_tracks(tracks, bailed_indices, libpgs_path,
                                 input_path, preview_cache,
-                                budget=None)
+                                budget=None, has_cues=has_cues)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
                 has_bailed = _print_track_listing(tracks, video_range=video_range)
                 continue
@@ -531,147 +556,81 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     total_saved = 0
 
-    if max_ds is not None:
-        # ---- Streaming path: pipe per track, stop early ----
+    for ti in selected_indices:
+        track = tracks[ti]
+        folder_name = build_track_folder_name(ti, track)
+        track_out = os.path.join(out_dir, folder_name)
 
-        for ti in selected_indices:
-            track = tracks[ti]
-            folder_name = build_track_folder_name(ti, track)
-            track_out = os.path.join(out_dir, folder_name)
+        title_str = f' "{track["title"]}"' if track["title"] else ""
+        print(heading(f"=== Track {ti}: {track['language']}{title_str} "
+                      f"(stream {track['index']}) ==="))
 
-            title_str = f' "{track["title"]}"' if track["title"] else ""
-            print(heading(f"=== Track {ti}: {track['language']}{title_str} "
-                          f"(stream {track['index']}) ==="))
+        cached = preview_cache.get(ti)
+        content_ds = ([d for d in cached if ds_has_content(d)]
+                      if cached else [])
 
-            cached = preview_cache.get(ti)
-            content_ds = ([d for d in cached if ds_has_content(d)]
-                          if cached else [])
-
-            if max_ds == "cached":
-                # Cache-only mode: use whatever was collected during analysis.
-                if not content_ds:
-                    print(f"  {dim('No cached subtitles for this track. Skipping.')}")
-                    print()
-                    continue
-                display_sets = cached
-                effective_limit = DEFAULT_INTERACTIVE_COUNT
-            else:
-                # Reuse cached analysis data when it has enough content.
-                if len(content_ds) >= max_ds:
-                    display_sets = cached
-                else:
-                    display_sets = None
-                    # Try MKV direct extraction first.
-                    if os.path.splitext(input_path)[1].lower() in MATROSKA_EXTENSIONS:
-                        try:
-                            from .mkv import extract_analysis_samples_mkv
-                            stream_tmp = tempfile.mkdtemp(prefix="pgs_stream_")
-                            sup_list = extract_analysis_samples_mkv(
-                                input_path, [track], stream_tmp,
-                                max_ds=max_ds,
-                            )
-                            if sup_list and os.path.getsize(sup_list[0]) > 0:
-                                display_sets = read_sup(sup_list[0])
-                            shutil.rmtree(stream_tmp, ignore_errors=True)
-                        except Exception as exc:
-                            display_sets = None
-                            print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
-
-                    if display_sets is None:
-                        try:
-                            display_sets = extract_track_streaming(
-                                ffmpeg_path, input_path, track["index"], max_ds,
-                            )
-                        except Exception as e:
-                            print(f"  {error('[error]')} Streaming extraction failed: {e}")
-                            continue
-                effective_limit = max_ds
-
-            if not display_sets:
-                print("  No subtitles found.")
-                continue
-
-            _adjust_pts_offset(display_sets, start_time_s)
-            content_total = sum(1 for d in display_sets if ds_has_content(d))
-            if max_ds == "cached" and content_total > effective_limit:
-                print(f"  Collected {bold(str(content_total))} subtitle(s),"
-                      f" rendering first {bold(str(effective_limit))}.")
-            else:
-                print(f"  Collected {bold(str(content_total))} subtitle(s).")
-            track_label = f"Stream {track['index']}: {track['language']}"
-            if track["title"]:
-                track_label += f' "{track["title"]}"'
-            saved = process_display_sets(
-                display_sets, track_out, track_modes[ti], tonemap, nocrop,
-                limit=effective_limit,
-                detection=tracks[ti].get("detection"),
-                input_name=os.path.basename(input_path),
-                track_name=track_label,
-                threads=threads,
-            )
-            total_saved += saved
-            print()
-
-    else:
-        # ---- Batch path: extract selected tracks to temp files ----
-        selected_track_list = [tracks[i] for i in selected_indices]
-        temp_dir = tempfile.mkdtemp(prefix="pgs_extract_")
-
-        try:
-            # Try MKV direct extraction first (Cues-based, orders of
-            # magnitude faster than FFmpeg for large files).
-            sup_paths = None
-            if os.path.splitext(input_path)[1].lower() in MATROSKA_EXTENSIONS:
-                try:
-                    from .mkv import extract_pgs_tracks_mkv
-                    sup_paths = extract_pgs_tracks_mkv(
-                        input_path, selected_track_list,
-                        temp_dir,
-                    )
-                except Exception as exc:
-                    sup_paths = None
-                    print(f"  {dim('(MKV direct read failed, using FFmpeg: ' + str(exc) + ')')}")
-
-            if sup_paths is None:
-                try:
-                    sup_paths = extract_all_pgs_tracks(
-                        ffmpeg_path, input_path, selected_track_list,
-                        temp_dir, duration_s
-                    )
-                except subprocess.CalledProcessError as e:
-                    print(f"{error('[error]')} ffmpeg extraction failed: {e}")
-                    return
-
-            for enum_i, ti in enumerate(selected_indices):
-                track = tracks[ti]
-                folder_name = build_track_folder_name(ti, track)
-                track_out = os.path.join(out_dir, folder_name)
-                temp_sup = sup_paths[enum_i]
-
-                title_str = f' "{track["title"]}"' if track["title"] else ""
-                print(heading(f"=== Track {ti}: {track['language']}{title_str} "
-                              f"(stream {track['index']}) ==="))
-
-                if not os.path.isfile(temp_sup):
-                    print(f"  {warn('[warn]')} Extraction produced no output "
-                          f"for stream {track['index']}")
-                    continue
-
-                track_label = f"Stream {track['index']}: {track['language']}"
-                if track["title"]:
-                    track_label += f' "{track["title"]}"'
-                saved = process_sup_file(
-                    temp_sup, track_out, track_modes[ti], tonemap, None, nocrop,
-                    input_name=os.path.basename(input_path),
-                    track_name=track_label,
-                    threads=threads,
-                    start_time_s=start_time_s,
-                )
-                total_saved += saved
+        if max_ds is not None and max_ds == "cached":
+            # Cache-only mode: use whatever was collected during analysis.
+            if not content_ds:
+                print(f"  {dim('No cached subtitles for this track. Skipping.')}")
                 print()
+                continue
+            display_sets = cached
+            effective_limit = DEFAULT_INTERACTIVE_COUNT
+        elif max_ds is not None:
+            # Streaming path with limit.
+            if len(content_ds) >= max_ds:
+                # Reuse cached analysis data when it has enough content.
+                display_sets = cached
+            else:
+                try:
+                    display_sets = stream_file(
+                        libpgs_path, input_path,
+                        track_id=track["track_id"],
+                        max_ds=max_ds,
+                        show_progress=True,
+                    )
+                except Exception as e:
+                    print(f"  {error('[error]')} Streaming extraction failed: {e}")
+                    continue
+            effective_limit = max_ds
+        else:
+            # Batch path: stream all display sets for this track.
+            try:
+                display_sets = stream_file(
+                    libpgs_path, input_path,
+                    track_id=track["track_id"],
+                    show_progress=True,
+                )
+            except Exception as e:
+                print(f"  {error('[error]')} Extraction failed: {e}")
+                continue
+            effective_limit = None
 
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        if not display_sets:
+            print("  No subtitles found.")
+            print()
+            continue
+
+        content_total = sum(1 for d in display_sets if ds_has_content(d))
+        if max_ds == "cached" and content_total > effective_limit:
+            print(f"  Collected {bold(str(content_total))} subtitle(s),"
+                  f" rendering first {bold(str(effective_limit))}.")
+        else:
+            print(f"  Collected {bold(str(content_total))} subtitle(s).")
+        track_label = f"Stream {track['index']}: {track['language']}"
+        if track["title"]:
+            track_label += f' "{track["title"]}"'
+        saved = process_display_sets(
+            display_sets, track_out, track_modes[ti], tonemap, nocrop,
+            limit=effective_limit,
+            detection=tracks[ti].get("detection"),
+            input_name=os.path.basename(input_path),
+            track_name=track_label,
+            threads=threads,
+        )
+        total_saved += saved
+        print()
 
     print(f"{success('Done.')} {total_saved} total images across "
           f"{len(selected_indices)} track(s) in {out_dir}/")

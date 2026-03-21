@@ -4,20 +4,28 @@
 
 A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles. Validates PGS tracks with per-track SDR/HDR detection and can export each subtitle as a PNG using the correct colour pipeline — **HDR** (UHD Blu-ray, BT.2020 + PQ) or **SDR** (standard Blu-ray, BT.709).
 
-Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which PGS subtitle tracks are automatically discovered and extracted via FFmpeg.
+Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which PGS subtitle tracks are automatically discovered and extracted via [libpgs](https://github.com/matthane/libpgs).
 
-## Requirements
+## Installation
+
+Download the latest release for your platform from the [Releases](https://github.com/matthane/ProofPGS/releases) page. Each release archive includes ProofPGS and a pre-built [libpgs](https://github.com/matthane/libpgs) binary — no separate download needed.
+
+### Requirements
 
 - Python 3.10+
 - [NumPy](https://pypi.org/project/numpy/)
 - [Pillow](https://pypi.org/project/Pillow/)
-- [FFmpeg](https://ffmpeg.org/) (only needed when processing video containers)
+- [FFmpeg](https://ffmpeg.org/) (optional — only needed for the video stream dynamic range mismatch badge)
 
 Install Python dependencies:
 
 ```
 pip install numpy pillow
 ```
+
+### Running from source
+
+If you prefer to run from a git clone instead of a release archive, you'll need to provide the [libpgs](https://github.com/matthane/libpgs) binary yourself. Place `libpgs` (or `libpgs.exe` on Windows) in `proofpgs/bin/`, or add it to your system PATH.
 
 ## Quick Start
 
@@ -158,13 +166,13 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ## Performance
 
-**Direct MKV extraction:** For MKV files, ProofPGS includes a custom EBML/Matroska parser that reads the Cues index built into the container to locate subtitle blocks by their exact file positions. Instead of scanning the entire file sequentially (40 GB+ for UHD Blu-ray remuxes), it seeks directly to only the clusters and blocks containing PGS data — typically reading just a few MB out of tens of GB. This requires the MKV to have its subtitle tracks indexed in the Cues element. In practice, MKVs using Matroska version 4 (the current default for modern muxing tools) typically include subtitle Cues, while older version 2 files often only index video. Files without subtitle Cues fall back to FFmpeg extraction automatically. When the Cues also contain `CueRelativePosition` entries, an even faster path is available: individual subtitle blocks are read at their exact byte offsets without parsing the surrounding cluster data at all. Analysis, streaming, and batch extraction all benefit from this — a `Subtitle index detected` message in the output confirms the fast path is active.
+**libpgs extraction:** All file I/O — both `.sup` files and containers (MKV, M2TS) — is handled by [libpgs](https://github.com/matthane/libpgs), a Rust CLI that streams PGS data as NDJSON over a subprocess pipe. For MKV files, libpgs uses the Cues index to seek directly to subtitle blocks, reading only a few MB out of tens of GB for large UHD remuxes. No temp files are created — display sets are streamed into memory as they are extracted.
 
-**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks under a 10-second wallclock budget. For MKV files with subtitle Cues, direct block reads are fast enough that no budget is needed. For M2TS files or MKV files without subtitle Cues, a single FFmpeg pass extracts samples from all tracks simultaneously. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates extraction early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
+**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks under a 10-second wallclock budget. libpgs streams display sets from all tracks in a single pass. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates extraction early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
 
-**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), MKV files use direct block reads while M2TS files use FFmpeg piping (no temp files). Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
+**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), ProofPGS closes the libpgs pipe once enough display sets have been collected. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
 
-**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), MKV files use parallel direct I/O via the Cues index. M2TS files use a single FFmpeg pass to extract all selected tracks to temporary files, then each is decoded in turn. Both paths fall back to FFmpeg automatically on any parse error.
+**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), libpgs streams the full track contents. Each track is extracted in a separate pass with a track filter.
 
 **Multi-threaded rendering:** PNG rendering uses multiple threads by default (auto-detected, up to 8). Override with `--threads`.
 
@@ -175,20 +183,33 @@ proofpgs/
   assets/             # Bundled resources (fonts, icons)
     Sora-Medium.ttf
     Sora-Regular.ttf
+  bin/                # Bundled libpgs binary (platform-specific, gitignored)
   __init__.py         # Public API exports
   __main__.py         # python -m proofpgs entry point
   cli.py              # Argument parsing and main()
   constants.py        # PQ constants, segment types, file extensions
   detect.py           # SDR/HDR auto-detection via PQ plausibility analysis
-  parser.py           # PGS binary parsing, segment parsers, RLE decoder
+  parser.py           # PGS segment payload parsers, RLE decoder, bitmap entry scanner
   color.py            # Colour-space math and palette decoding (HDR & SDR)
   renderer.py         # Display set rendering and PNG output
-  ffmpeg.py           # FFmpeg/ffprobe integration
-  mkv.py              # Direct MKV extraction via EBML/Cues parsing
+  libpgs.py           # libpgs CLI adapter (subprocess streaming)
+  ffmpeg.py           # ffprobe video range detection
   interactive.py      # Interactive track and count selection
   pipeline.py         # High-level orchestration
   shellmenu.py        # Windows Explorer context menu integration
   style.py            # Terminal styling and color output
 LICENSES/
   OFL.txt             # SIL Open Font License 1.1 (Sora font)
+```
+
+## Build Provenance
+
+Release archives are built entirely in GitHub Actions from auditable source code — no locally-built binaries are uploaded. The libpgs binary included in each release is compiled from the [libpgs source](https://github.com/matthane/libpgs) at its latest tagged release using `cargo build --release` on each platform's native CI runner.
+
+Every release archive includes a `BUILD_INFO.txt` with the exact libpgs tag, commit hash, build target, and a link to the workflow run log. Release artifacts are signed with [Sigstore](https://www.sigstore.dev/) artifact attestations, cryptographically linking each archive to the GitHub Actions workflow and source commit that produced it.
+
+To verify a downloaded release:
+
+```bash
+gh attestation verify ProofPGS-<version>-<platform>.zip --repo matthane/ProofPGS
 ```
