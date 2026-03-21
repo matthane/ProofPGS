@@ -184,7 +184,7 @@ proofpgs/
   cli.py              # Argument parsing and main()
   constants.py        # PQ constants, segment types, file extensions
   detect.py           # SDR/HDR auto-detection via PQ plausibility analysis
-  parser.py           # PGS segment payload parsers and RLE decoder
+  parser.py           # PGS segment payload parsers, RLE decoder, bitmap entry scanner
   color.py            # Colour-space math and palette decoding (HDR & SDR)
   renderer.py         # Display set rendering and PNG output
   libpgs.py           # libpgs CLI adapter (subprocess streaming)
