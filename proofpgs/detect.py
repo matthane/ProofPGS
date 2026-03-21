@@ -26,8 +26,8 @@ Secondary signals: Y-value thresholds and achromatic entry analysis
 handle cases where the PQ test is inconclusive.
 """
 
-from .constants import SEG_PDS
-from .parser import parse_pds
+from .constants import SEG_PDS, SEG_ODS
+from .parser import parse_pds, parse_ods, rle_used_entries
 
 # --- BT.2020 YCbCr → R'G'B' matrix coefficients (limited-range normalised) ---
 # R' = Yn + 1.4746 * Crn
@@ -68,6 +68,13 @@ _ACHRO_TOL = 3
 
 # Minimum Y to consider an entry meaningful (skip shadows/outlines).
 _MIN_Y = 50
+
+# Minimum alpha to consider a palette entry visible.  PGS fade-in frames
+# define the full palette but with near-zero alpha (1–11) on most entries.
+# These are functionally invisible and should not influence detection.
+# 32 (~12.5% opacity) excludes anti-aliasing fringe and fade-in entries
+# while keeping any genuinely rendered content.
+_MIN_ALPHA = 32
 
 
 def _bt2020_max_channel(y, cr, cb):
@@ -115,6 +122,18 @@ def detect_from_palettes(display_sets: list) -> dict:
     has_bright = False  # at least one entry with Y > _MIN_Y
 
     for ds in display_sets:
+        # Collect palette entry IDs actually referenced by the bitmap.
+        # Fade-in frames define the full palette (including bright text
+        # at high alpha) but only reference dim, low-alpha entries in
+        # the RLE data.  Considering unreferenced entries would let a
+        # single ghost palette entry corrupt the detection verdict.
+        used_ids = set()
+        for seg in ds:
+            if seg["type"] == SEG_ODS:
+                ods = parse_ods(seg["payload"])
+                if ods and ods.get("rle"):
+                    used_ids |= rle_used_entries(ods["rle"])
+
         for seg in ds:
             if seg["type"] != SEG_PDS:
                 continue
@@ -124,8 +143,11 @@ def detect_from_palettes(display_sets: list) -> dict:
                 continue
             num_palettes += 1
 
-            for _eid, (y, cr, cb, alpha) in palette.items():
-                if alpha == 0:
+            for eid, (y, cr, cb, alpha) in palette.items():
+                if alpha < _MIN_ALPHA:
+                    continue
+                # Skip entries not referenced by the bitmap.
+                if used_ids and eid not in used_ids:
                     continue
                 if y > max_y:
                     max_y = y
@@ -145,10 +167,21 @@ def detect_from_palettes(display_sets: list) -> dict:
     # unique values.  This requires at least 5% of distinct palette entries
     # to exceed the threshold before triggering the SDR signal — robust
     # against outlier glow/gradient/saturated entries in HDR content.
+    #
+    # For small samples (< 20 unique values), int(n * 0.95) == n-1, so the
+    # raw p95 always selects the maximum — a single outlier (e.g. a fade-in
+    # text entry at Y=200) dominates the metric.  Clamping to len-2 ensures
+    # we always exclude at least the top unique value, so one outlier can
+    # never single-handedly trigger the SDR signal.
     if pq_values:
         unique_pq = sorted(set(pq_values))
-        p95_idx = min(int(len(unique_pq) * _PQ_PERCENTILE), len(unique_pq) - 1)
-        max_pq_channel = unique_pq[p95_idx]
+        if len(unique_pq) >= 2:
+            p95_idx = min(int(len(unique_pq) * _PQ_PERCENTILE),
+                          len(unique_pq) - 2)
+            max_pq_channel = unique_pq[p95_idx]
+        else:
+            # Single unique PQ value — use it directly.
+            max_pq_channel = unique_pq[0]
     else:
         max_pq_channel = 0.0
 
