@@ -36,7 +36,8 @@ def _resolve_auto_mode(detection: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
-                    preview_cache, budget=None, has_cues=True):
+                    preview_cache, budget=None, has_cues=True,
+                    reuse_proc=None, reuse_tracks=None):
     """Multi-pass analysis: stream tracks via libpgs, restarting with
     fewer tracks as each one reaches a conclusive detection verdict.
 
@@ -47,6 +48,10 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
     tracks — letting it use MKV Cues to skip past already-validated
     data.  When *has_cues* is False, restarts are disabled and all
     tracks are streamed in a single pass.
+
+    When *reuse_proc* is provided (a running libpgs subprocess whose
+    tracks header has already been consumed), it is used for the first
+    pass — avoiding a redundant cluster-map build on slow sources.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -118,6 +123,15 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                     return True
                 return False
 
+            # On the first pass, reuse the discover_tracks process if
+            # provided — avoids rebuilding the cluster map on slow I/O.
+            _extra = {}
+            if reuse_proc is not None:
+                _extra["existing_proc"] = reuse_proc
+                _extra["existing_tracks"] = reuse_tracks
+                reuse_proc = None   # only for the first pass
+                reuse_tracks = None
+
             track_data, done_tids = stream_all_tracks(
                 libpgs_path, input_path,
                 track_ids=remaining_tids,
@@ -125,6 +139,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 deadline=budget.deadline() if budget else None,
                 track_check=track_check,
                 allow_restart=has_cues,
+                **_extra,
             )
 
             if _debug:
@@ -376,7 +391,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
     """
     # === Phase 1: Discover tracks via libpgs ===
     print(f"{info('Probing:')} {input_path}")
-    raw_tracks = discover_tracks(libpgs_path, input_path)
+    raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
+                                            keep_alive=True)
 
     if not raw_tracks:
         print(warn("No PGS subtitle tracks found."))
@@ -386,6 +402,20 @@ def process_container(input_path: str, out_dir: str, mode: str,
     # has_cues: if any track lacks cues, disable multi-pass restart
     # (restarts without cues re-read from the beginning).
     has_cues = all(t.get("has_cues", True) for t in raw_tracks)
+
+    # For files with Cues, we don't need the discover process — a fresh
+    # libpgs invocation with specific track IDs can seek efficiently.
+    # For files without Cues, reuse the process to avoid rebuilding the
+    # cluster map (which can take seconds over NAS).
+    if has_cues and kept_proc is not None:
+        try:
+            kept_proc.stdout.close()
+        except Exception:
+            pass
+        if kept_proc.poll() is None:
+            kept_proc.kill()
+        kept_proc.wait()
+        kept_proc = None
     tracks = []
     for t in raw_tracks:
         tracks.append({
@@ -408,11 +438,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     if mode == "validate":
         _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
-                        preview_cache, budget=None, has_cues=has_cues)
+                        preview_cache, budget=None, has_cues=has_cues,
+                        reuse_proc=kept_proc, reuse_tracks=raw_tracks)
     else:
         _analyze_tracks(tracks, all_indices, libpgs_path, input_path,
                         preview_cache,
-                        budget=Budget(LISTING_BUDGET_S), has_cues=has_cues)
+                        budget=Budget(LISTING_BUDGET_S), has_cues=has_cues,
+                        reuse_proc=kept_proc, reuse_tracks=raw_tracks)
 
     # === Phase 3: Display track listing ===
     has_bailed = _print_track_listing(tracks, video_range=video_range)

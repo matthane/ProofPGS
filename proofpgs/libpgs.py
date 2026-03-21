@@ -93,13 +93,32 @@ def _convert_display_set(ds_json: dict) -> list:
 # Track discovery
 # ---------------------------------------------------------------------------
 
-def discover_tracks(libpgs_path: str, input_path: str) -> list:
-    """Spawn libpgs, read only the tracks header, then kill the process.
+def discover_tracks(libpgs_path: str, input_path: str,
+                    keep_alive: bool = False):
+    """Spawn libpgs and read the tracks header.
 
-    Returns a list of track dicts:
+    When *keep_alive* is False (default), the process is killed after
+    reading the header and a plain list of track dicts is returned.
+
+    When *keep_alive* is True, the process is left running so the
+    caller can continue reading display sets from it — avoiding a
+    second cluster-map build for slow sources (NAS, no-Cue files).
+    Returns ``(tracks, proc)``; the caller is responsible for closing
+    and killing *proc*.
+
+    Track dicts:
       {track_id, language, container, name, flag_default, flag_forced,
-       display_set_count}
+       display_set_count, has_cues}
     """
+    def _kill(p):
+        try:
+            p.stdout.close()
+        except Exception:
+            pass
+        if p.poll() is None:
+            p.kill()
+        p.wait()
+
     proc = subprocess.Popen(
         [libpgs_path, "stream", input_path],
         stdout=subprocess.PIPE,
@@ -108,19 +127,22 @@ def discover_tracks(libpgs_path: str, input_path: str) -> list:
     try:
         first_line = proc.stdout.readline()
         if not first_line:
-            return []
+            _kill(proc)
+            return ([], None) if keep_alive else []
         header = json.loads(first_line)
         if header.get("type") != "tracks":
-            return []
-        return header.get("tracks", [])
-    finally:
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        if proc.poll() is None:
-            proc.kill()
-        proc.wait()
+            _kill(proc)
+            return ([], None) if keep_alive else []
+        tracks = header.get("tracks", [])
+    except Exception:
+        _kill(proc)
+        return ([], None) if keep_alive else []
+
+    if keep_alive:
+        return tracks, proc
+
+    _kill(proc)
+    return tracks
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +249,9 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                       max_ds_per_track: int = None,
                       deadline: float = None,
                       track_check=None,
-                      allow_restart: bool = True) -> tuple:
+                      allow_restart: bool = True,
+                      existing_proc=None,
+                      existing_tracks: list = None) -> tuple:
     """Stream tracks from a single libpgs invocation, demultiplexed.
 
     Reads NDJSON lines from ``libpgs stream <file> [-t id,...]``
@@ -259,24 +283,38 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                           after the grace period so the caller can restart
                           libpgs with fewer tracks (requires MKV Cues).
                           When False, continue streaming in a single pass.
+        existing_proc:    A subprocess already streaming NDJSON (from
+                          ``discover_tracks(keep_alive=True)``).  Reuses
+                          the process to avoid a second cluster-map build
+                          on slow sources.  The tracks header must already
+                          be consumed; pass the parsed tracks list via
+                          *existing_tracks*.
+        existing_tracks:  Pre-parsed track dicts from the tracks header
+                          (required when *existing_proc* is set).
 
     Returns:
         ``(track_data, concluded_tids)`` where *track_data* is
         ``{track_id: [display_sets]}`` and *concluded_tids* is the set
         of track IDs that were marked concluded by *track_check*.
     """
-    cmd = [libpgs_path, "stream", input_path]
-    if track_ids:
-        cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
+    if existing_proc is not None:
+        proc = existing_proc
+        if _DEBUG:
+            print(f"  [DEBUG] Reusing existing libpgs process (pid={proc.pid})",
+                  flush=True)
+    else:
+        cmd = [libpgs_path, "stream", input_path]
+        if track_ids:
+            cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
 
-    if _DEBUG:
-        print(f"  [DEBUG] libpgs cmd: {' '.join(cmd)}", flush=True)
+        if _DEBUG:
+            print(f"  [DEBUG] libpgs cmd: {' '.join(cmd)}", flush=True)
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
 
     # Deadline watchdog: kill the process if we're blocked on I/O past
     # the deadline.  Without this, slow sources (NAS) can stall the
@@ -301,6 +339,17 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
     concluded_tids = set()  # tracks concluded by track_check
     last_check = 0.0
     last_concluded_at = None  # monotonic time of last track_check conclusion
+
+    # Pre-populate from existing_tracks (header already consumed).
+    if existing_tracks:
+        for t in existing_tracks:
+            tid = t["track_id"]
+            track_data.setdefault(tid, [])
+            content_counts.setdefault(tid, 0)
+        if _DEBUG:
+            print(f"  [DEBUG] Pre-initialized {len(track_data)} track(s) "
+                  f"from existing header: {sorted(track_data.keys())}",
+                  flush=True)
 
     try:
         for line in proc.stdout:
