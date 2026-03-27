@@ -10,13 +10,6 @@ PQ_C1 = 0.8359375
 PQ_C2 = 18.8515625
 PQ_C3 = 18.6875
 
-# PGS segment type codes
-SEG_PDS = 0x14  # Palette Definition
-SEG_ODS = 0x15  # Object Definition
-SEG_PCS = 0x16  # Presentation Composition
-SEG_WDS = 0x17  # Window Definition
-SEG_END = 0x80  # End of Display Set
-
 # Recognised file extensions
 SUP_EXTENSIONS = {".sup"}
 CONTAINER_EXTENSIONS = {".mkv", ".mk3d", ".m2ts"}

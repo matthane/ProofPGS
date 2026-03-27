@@ -1,7 +1,6 @@
 """Display Set rendering and PNG output."""
 
 import os
-import struct
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -16,8 +15,7 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 _DEFAULT_MAX_THREADS = 8
 
 from . import __version__
-from .constants import SEG_PCS, SEG_PDS, SEG_ODS
-from .parser import parse_pcs, parse_pds, parse_ods, decode_rle, pts_to_ms, ds_has_content
+from .parser import decode_rle, ds_has_content
 from .color import decode_palette_hdr, decode_palette_sdr
 
 
@@ -37,42 +35,18 @@ _CompareResources = namedtuple("_CompareResources", [
 ])
 
 
-def render_ds(ds: list, mode: str, tonemap: str) -> tuple:
+def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
     """Render one Display Set to a PIL RGBA image.
     Returns (Image | None, pts_ms).
     """
-    pcs_data = None
-    palette  = {}
-    objects  = {}   # obj_id -> {width, height, rle}
-    pts_ms   = 0.0
+    comp    = ds.get("composition")
+    palette = ds.get("palettes", {})
+    objects = ds.get("objects", {})
+    pts_ms  = ds.get("pts_ms", 0.0)
 
-    for seg in ds:
-        t = seg["type"]
-        p = seg["payload"]
-
-        if t == SEG_PCS:
-            pcs_data = parse_pcs(p)
-            pts_ms   = pts_to_ms(seg["pts"])
-
-        elif t == SEG_PDS:
-            palette.update(parse_pds(p))
-
-        elif t == SEG_ODS:
-            ods = parse_ods(p)
-            if not ods:
-                continue
-            oid = ods["obj_id"]
-            if oid not in objects:
-                objects[oid] = {"width": None, "height": None, "rle": b""}
-            # First fragment carries dimensions
-            if ods["width"] is not None:
-                objects[oid]["width"]  = ods["width"]
-                objects[oid]["height"] = ods["height"]
-            objects[oid]["rle"] += ods["rle"]
-
-    if not pcs_data or not palette or not objects:
+    if not comp or not palette or not objects:
         return None, pts_ms
-    if pcs_data["num_objects"] == 0:
+    if not comp["objects"]:
         return None, pts_ms
 
     # Build colour LUT
@@ -82,23 +56,14 @@ def render_ds(ds: list, mode: str, tonemap: str) -> tuple:
         lut = decode_palette_sdr(palette)
 
     # Render onto full-frame canvas
-    canvas_w = pcs_data["width"]
-    canvas_h = pcs_data["height"]
+    canvas_w = comp["video_width"]
+    canvas_h = comp["video_height"]
     canvas   = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
-    # Parse composition objects from PCS payload (offset 11, 8 bytes each, +8 if cropped)
-    raw       = pcs_data["raw"]
-    obj_off   = 11
-    for _ in range(pcs_data["num_objects"]):
-        if obj_off + 8 > len(raw):
-            break
-        obj_id    = struct.unpack(">H", raw[obj_off:obj_off + 2])[0]
-        crop_flag = raw[obj_off + 3]
-        x_pos     = struct.unpack(">H", raw[obj_off + 4:obj_off + 6])[0]
-        y_pos     = struct.unpack(">H", raw[obj_off + 6:obj_off + 8])[0]
-        obj_off  += 8
-        if crop_flag & 0x40:
-            obj_off += 8  # skip crop rectangle
+    for placement in comp["objects"]:
+        obj_id = placement["object_id"]
+        x_pos  = placement["x"]
+        y_pos  = placement["y"]
 
         if obj_id not in objects:
             continue

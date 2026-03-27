@@ -4,8 +4,6 @@ import struct
 
 import numpy as np
 
-from .constants import SEG_ODS, SEG_PDS
-
 
 def rle_used_entries(rle_data: bytes) -> set:
     """Scan RLE data and return the set of palette entry IDs actually used.
@@ -48,54 +46,19 @@ def rle_used_entries(rle_data: bytes) -> set:
     return used
 
 
-def ds_has_content(ds: list) -> bool:
+def ds_has_content(ds: dict) -> bool:
     """Check if a display set contains renderable subtitle content.
 
-    PGS subtitles use paired display sets: one to show (with ODS bitmap
-    data) and one to clear (PCS with num_objects=0, no ODS).  Only the
-    "show" sets produce a visible PNG.  We detect content by checking
-    for at least one Object Definition Segment (ODS / 0x15).
+    PGS subtitles use paired display sets: one to show (with object bitmap
+    data) and one to clear (composition with no objects).  Only the "show"
+    sets produce a visible PNG.
     """
-    return any(seg["type"] == SEG_ODS for seg in ds)
-
-
-def pts_to_ms(pts: int) -> float:
-    return pts / 90.0
+    return bool(ds.get("objects"))
 
 
 # ---------------------------------------------------------------------------
 # Segment parsers
 # ---------------------------------------------------------------------------
-
-def parse_pcs(payload: bytes) -> dict:
-    if len(payload) < 11:
-        return {}
-    return {
-        "width":          struct.unpack(">H", payload[0:2])[0],
-        "height":         struct.unpack(">H", payload[2:4])[0],
-        "comp_state":     payload[7],
-        "palette_update": payload[8],
-        "palette_id":     payload[9],
-        "num_objects":    payload[10],
-        "raw":            payload,   # kept for composition object parsing
-    }
-
-
-def parse_pds(payload: bytes) -> dict:
-    """Parse Palette Definition Segment.
-    Returns dict mapping entry_id -> (Y, Cr, Cb, Alpha).
-    NOTE: Per the PGS spec the order is Y, Cr, Cb — not Y, Cb, Cr.
-    """
-    entries = {}
-    i = 2  # skip palette_id, version
-    while i + 4 < len(payload):
-        eid        = payload[i]
-        Y, Cr, Cb  = payload[i + 1], payload[i + 2], payload[i + 3]
-        alpha      = payload[i + 4]
-        entries[eid] = (Y, Cr, Cb, alpha)
-        i += 5
-    return entries
-
 
 def parse_ods(payload: bytes) -> dict:
     """Parse Object Definition Segment. Returns metadata + raw RLE bytes."""

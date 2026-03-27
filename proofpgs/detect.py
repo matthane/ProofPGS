@@ -26,8 +26,7 @@ Secondary signals: Y-value thresholds and achromatic entry analysis
 handle cases where the PQ test is inconclusive.
 """
 
-from .constants import SEG_PDS, SEG_ODS
-from .parser import parse_pds, parse_ods, rle_used_entries
+from .parser import rle_used_entries
 
 # --- BT.2020 YCbCr → R'G'B' matrix coefficients (limited-range normalised) ---
 # R' = Yn + 1.4746 * Crn
@@ -102,8 +101,9 @@ def detect_from_palettes(display_sets: list) -> dict:
     detection algorithm.
 
     Args:
-        display_sets: list of display sets (each a list of segment dicts
-                      with keys ``type``, ``pts``, ``payload``).
+        display_sets: list of display sets (each a dict with keys
+                      ``pts``, ``pts_ms``, ``composition``, ``palettes``,
+                      ``objects``).
 
     Returns:
         dict with keys:
@@ -128,40 +128,34 @@ def detect_from_palettes(display_sets: list) -> dict:
         # the RLE data.  Considering unreferenced entries would let a
         # single ghost palette entry corrupt the detection verdict.
         used_ids = set()
-        for seg in ds:
-            if seg["type"] == SEG_ODS:
-                ods = parse_ods(seg["payload"])
-                if ods and ods.get("rle"):
-                    used_ids |= rle_used_entries(ods["rle"])
+        for obj in ds.get("objects", {}).values():
+            if obj.get("rle"):
+                used_ids |= rle_used_entries(obj["rle"])
 
-        for seg in ds:
-            if seg["type"] != SEG_PDS:
+        palette = ds.get("palettes", {})
+        if not palette:
+            continue
+        num_palettes += 1
+
+        for eid, (y, cr, cb, alpha) in palette.items():
+            if alpha < _MIN_ALPHA:
                 continue
-
-            palette = parse_pds(seg["payload"])
-            if not palette:
+            # Skip entries not referenced by the bitmap.
+            if used_ids and eid not in used_ids:
                 continue
-            num_palettes += 1
+            if y > max_y:
+                max_y = y
 
-            for eid, (y, cr, cb, alpha) in palette.items():
-                if alpha < _MIN_ALPHA:
-                    continue
-                # Skip entries not referenced by the bitmap.
-                if used_ids and eid not in used_ids:
-                    continue
-                if y > max_y:
-                    max_y = y
+            if y > _MIN_Y:
+                has_bright = True
+                # PQ plausibility: decode as BT.2020 and check max channel
+                ch = _bt2020_max_channel(y, cr, cb)
+                pq_values.append(ch)
 
-                if y > _MIN_Y:
-                    has_bright = True
-                    # PQ plausibility: decode as BT.2020 and check max channel
-                    ch = _bt2020_max_channel(y, cr, cb)
-                    pq_values.append(ch)
-
-                # Achromatic check: Cb and Cr both near 128
-                if abs(cb - 128) <= _ACHRO_TOL and abs(cr - 128) <= _ACHRO_TOL:
-                    if max_achromatic_y is None or y > max_achromatic_y:
-                        max_achromatic_y = y
+            # Achromatic check: Cb and Cr both near 128
+            if abs(cb - 128) <= _ACHRO_TOL and abs(cr - 128) <= _ACHRO_TOL:
+                if max_achromatic_y is None or y > max_achromatic_y:
+                    max_achromatic_y = y
 
     # Compute representative PQ channel value: use the 95th percentile of
     # unique values.  This requires at least 5% of distinct palette entries
