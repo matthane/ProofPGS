@@ -407,7 +407,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     # Build track dicts from libpgs metadata.
     # has_cues: if any track lacks cues, disable multi-pass restart
     # (restarts without cues re-read from the beginning).
-    has_cues = all(t.get("has_cues", True) for t in raw_tracks)
+    has_cues = all(t.get("indexed") is True for t in raw_tracks)
 
     # For files with Cues, we don't need the discover process — a fresh
     # libpgs invocation with specific track IDs can seek efficiently.
@@ -429,8 +429,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             "track_id":   t["track_id"],
             "language":   t.get("language") or "und",
             "title":      t.get("name") or "",
-            "forced":     bool(t.get("flag_forced")),
-            "default":    bool(t.get("flag_default")),
+            "forced":     bool(t.get("is_forced")),
+            "default":    bool(t.get("is_default")),
             "num_frames": t.get("display_set_count"),
         })
 

@@ -16,23 +16,10 @@ import threading
 import time
 
 from .constants import format_time, ANALYSIS_RESTART_GRACE_S
-from .parser import ds_has_content
+from .parser import parse_ods, ds_has_content
 from .style import error
 
 _DEBUG = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
-
-
-# ---------------------------------------------------------------------------
-# Segment type name -> internal type code mapping
-# ---------------------------------------------------------------------------
-
-_SEG_TYPE_MAP = {
-    "PresentationComposition": 0x16,
-    "WindowDefinition":        0x17,
-    "PaletteDefinition":       0x14,
-    "ObjectDefinition":        0x15,
-    "EndOfDisplaySet":         0x80,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -69,24 +56,62 @@ def check_libpgs() -> str:
 # NDJSON helpers
 # ---------------------------------------------------------------------------
 
-def _convert_display_set(ds_json: dict) -> list:
-    """Convert a libpgs NDJSON display_set object to internal format.
+def _convert_display_set(ds_json: dict) -> dict | None:
+    """Convert a libpgs NDJSON display_set to internal structured format.
 
-    Internal format: list of {type: int, pts: int, payload: bytes} dicts.
+    Returns a dict with keys: pts, pts_ms, composition, palettes, objects.
+    Requires ``--raw-payloads`` for ODS RLE data; all other fields come
+    from the structured JSON directly.
     """
-    segments = []
-    for seg in ds_json.get("segments", []):
-        seg_type = _SEG_TYPE_MAP.get(seg["type"])
-        if seg_type is None:
+    # Composition (None if malformed)
+    comp_json = ds_json.get("composition")
+    if comp_json is not None:
+        composition = {
+            "video_width": comp_json["video_width"],
+            "video_height": comp_json["video_height"],
+            "palette_id": comp_json["palette_id"],
+            "palette_only": comp_json.get("palette_only", False),
+            "objects": comp_json.get("objects", []),
+        }
+    else:
+        composition = None
+
+    # Palettes: flatten all palette entries into {eid: (Y, Cr, Cb, Alpha)}
+    palettes = {}
+    for pal in ds_json.get("palettes", []):
+        for entry in pal.get("entries", []):
+            palettes[entry["id"]] = (
+                entry["luminance"],
+                entry["cr"],
+                entry["cb"],
+                entry["alpha"],
+            )
+
+    # Objects: extract RLE from raw ODS payloads, keyed by object ID
+    objects = {}
+    for obj in ds_json.get("objects", []):
+        oid = obj["id"]
+        payload_b64 = obj.get("payload", "")
+        if not payload_b64:
             continue
-        payload_b64 = seg.get("payload", "")
-        payload = base64.b64decode(payload_b64) if payload_b64 else b""
-        segments.append({
-            "type": seg_type,
-            "pts": seg["pts"],
-            "payload": payload,
-        })
-    return segments
+        raw = base64.b64decode(payload_b64)
+        ods = parse_ods(raw)
+        if not ods:
+            continue
+        if oid not in objects:
+            objects[oid] = {"width": None, "height": None, "rle": b""}
+        if ods["width"] is not None:
+            objects[oid]["width"] = ods["width"]
+            objects[oid]["height"] = ods["height"]
+        objects[oid]["rle"] += ods["rle"]
+
+    return {
+        "pts": ds_json.get("pts", 0),
+        "pts_ms": ds_json.get("pts_ms", 0.0),
+        "composition": composition,
+        "palettes": palettes,
+        "objects": objects,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -107,8 +132,8 @@ def discover_tracks(libpgs_path: str, input_path: str,
     and killing *proc*.
 
     Track dicts:
-      {track_id, language, container, name, flag_default, flag_forced,
-       display_set_count, has_cues}
+      {track_id, language, container, name, is_default, is_forced,
+       display_set_count, indexed}
     """
     def _kill(p):
         try:
@@ -120,7 +145,7 @@ def discover_tracks(libpgs_path: str, input_path: str,
         p.wait()
 
     proc = subprocess.Popen(
-        [libpgs_path, "stream", input_path],
+        [libpgs_path, "stream", input_path, "--raw-payloads"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -163,13 +188,13 @@ def stream_file(libpgs_path: str, input_path: str,
         input_path:  Path to .sup file or container.
         track_id:    Track ID to extract (None = first/only track).
         max_ds:      Stop after this many *content* display sets
-                     (those with ODS segments). None = read all.
+                     (those with object data). None = read all.
         show_progress: Show streaming progress line.
 
     Returns:
         List of display sets in internal format.
     """
-    cmd = [libpgs_path, "stream", input_path]
+    cmd = [libpgs_path, "stream", input_path, "--raw-payloads"]
     if track_id is not None:
         cmd += ["-t", str(track_id)]
 
@@ -199,7 +224,7 @@ def stream_file(libpgs_path: str, input_path: str,
                 continue
 
             ds = _convert_display_set(obj)
-            if not ds:
+            if ds is None:
                 continue
 
             display_sets.append(ds)
@@ -303,7 +328,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             print(f"  [DEBUG] Reusing existing libpgs process (pid={proc.pid})",
                   flush=True)
     else:
-        cmd = [libpgs_path, "stream", input_path]
+        cmd = [libpgs_path, "stream", input_path, "--raw-payloads"]
         if track_ids:
             cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
 
@@ -398,7 +423,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                 continue
 
             ds = _convert_display_set(obj)
-            if not ds:
+            if ds is None:
                 continue
 
             track_data.setdefault(tid, []).append(ds)
