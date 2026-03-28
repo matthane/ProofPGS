@@ -15,7 +15,7 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 _DEFAULT_MAX_THREADS = 8
 
 from . import __version__
-from .parser import decode_rle, ds_has_content
+from .parser import ds_has_content
 from .color import decode_palette_hdr, decode_palette_sdr
 
 
@@ -73,9 +73,9 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
             continue
 
         try:
-            indices = decode_rle(obj["rle"], w, h)
+            indices = np.frombuffer(obj["bitmap"], dtype=np.uint8).reshape(h, w)
         except Exception as e:
-            print(f"  {warn('[warn]')} RLE decode error obj {obj_id}: {e}")
+            print(f"  {warn('[warn]')} Bitmap decode error obj {obj_id}: {e}")
             continue
 
         rgba    = lut[indices]                          # (h, w, 4) uint8

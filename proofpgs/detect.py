@@ -26,8 +26,6 @@ Secondary signals: Y-value thresholds and achromatic entry analysis
 handle cases where the PQ test is inconclusive.
 """
 
-from .parser import rle_used_entries
-
 # --- BT.2020 YCbCr → R'G'B' matrix coefficients (limited-range normalised) ---
 # R' = Yn + 1.4746 * Crn
 # G' = Yn - 0.1645 * Cbn - 0.5713 * Crn
@@ -129,8 +127,8 @@ def detect_from_palettes(display_sets: list) -> dict:
         # single ghost palette entry corrupt the detection verdict.
         used_ids = set()
         for obj in ds.get("objects", {}).values():
-            if obj.get("rle"):
-                used_ids |= rle_used_entries(obj["rle"])
+            if obj.get("bitmap"):
+                used_ids |= set(obj["bitmap"])
 
         palette = ds.get("palettes", {})
         if not palette:

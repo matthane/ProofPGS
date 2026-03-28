@@ -16,7 +16,7 @@ import threading
 import time
 
 from .constants import format_time, ANALYSIS_RESTART_GRACE_S
-from .parser import parse_ods, ds_has_content
+from .parser import ds_has_content
 from .style import error
 
 _DEBUG = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
@@ -60,8 +60,7 @@ def _convert_display_set(ds_json: dict) -> dict | None:
     """Convert a libpgs NDJSON display_set to internal structured format.
 
     Returns a dict with keys: pts, pts_ms, composition, palettes, objects.
-    Requires ``--raw-payloads`` for ODS RLE data; all other fields come
-    from the structured JSON directly.
+    Bitmaps come pre-decoded from libpgs as base64 palette-index buffers.
     """
     # Composition (None if malformed)
     comp_json = ds_json.get("composition")
@@ -87,23 +86,18 @@ def _convert_display_set(ds_json: dict) -> dict | None:
                 entry["alpha"],
             )
 
-    # Objects: extract RLE from raw ODS payloads, keyed by object ID
+    # Objects: decode bitmap from structured JSON, keyed by object ID
     objects = {}
     for obj in ds_json.get("objects", []):
+        bitmap_b64 = obj.get("bitmap")
+        if not bitmap_b64:
+            continue
         oid = obj["id"]
-        payload_b64 = obj.get("payload", "")
-        if not payload_b64:
-            continue
-        raw = base64.b64decode(payload_b64)
-        ods = parse_ods(raw)
-        if not ods:
-            continue
-        if oid not in objects:
-            objects[oid] = {"width": None, "height": None, "rle": b""}
-        if ods["width"] is not None:
-            objects[oid]["width"] = ods["width"]
-            objects[oid]["height"] = ods["height"]
-        objects[oid]["rle"] += ods["rle"]
+        objects[oid] = {
+            "width": obj["width"],
+            "height": obj["height"],
+            "bitmap": base64.b64decode(bitmap_b64),
+        }
 
     return {
         "pts": ds_json.get("pts", 0),
@@ -145,7 +139,7 @@ def discover_tracks(libpgs_path: str, input_path: str,
         p.wait()
 
     proc = subprocess.Popen(
-        [libpgs_path, "stream", input_path, "--raw-payloads"],
+        [libpgs_path, "stream", input_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -194,7 +188,7 @@ def stream_file(libpgs_path: str, input_path: str,
     Returns:
         List of display sets in internal format.
     """
-    cmd = [libpgs_path, "stream", input_path, "--raw-payloads"]
+    cmd = [libpgs_path, "stream", input_path]
     if track_id is not None:
         cmd += ["-t", str(track_id)]
 
@@ -328,7 +322,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             print(f"  [DEBUG] Reusing existing libpgs process (pid={proc.pid})",
                   flush=True)
     else:
-        cmd = [libpgs_path, "stream", input_path, "--raw-payloads"]
+        cmd = [libpgs_path, "stream", input_path]
         if track_ids:
             cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
 
