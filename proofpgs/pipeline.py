@@ -51,7 +51,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
 
     When *reuse_proc* is provided (a running libpgs subprocess whose
     tracks header has already been consumed), it is used for the first
-    pass — avoiding a redundant cluster-map build on slow sources.
+    pass — avoiding a redundant full read on slow sources.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -130,7 +130,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 return False
 
             # On the first pass, reuse the discover_tracks process if
-            # provided — avoids rebuilding the cluster map on slow I/O.
+            # provided — avoids re-reading from the start on slow I/O.
             _extra = {}
             if reuse_proc is not None:
                 _extra["existing_proc"] = reuse_proc
@@ -411,8 +411,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     # For files with Cues, we don't need the discover process — a fresh
     # libpgs invocation with specific track IDs can seek efficiently.
-    # For files without Cues, reuse the process to avoid rebuilding the
-    # cluster map (which can take seconds over NAS).
+    # For files without Cues, reuse the process to avoid re-reading
+    # from the start (which can take seconds over NAS).
     if has_cues and kept_proc is not None:
         try:
             kept_proc.stdout.close()

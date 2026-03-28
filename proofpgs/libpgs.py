@@ -121,7 +121,7 @@ def discover_tracks(libpgs_path: str, input_path: str,
 
     When *keep_alive* is True, the process is left running so the
     caller can continue reading display sets from it — avoiding a
-    second cluster-map build for slow sources (NAS, no-Cue files).
+    second full read for slow sources (NAS, non-indexed files).
     Returns ``(tracks, proc)``; the caller is responsible for closing
     and killing *proc*.
 
@@ -304,8 +304,8 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                           When False, continue streaming in a single pass.
         existing_proc:    A subprocess already streaming NDJSON (from
                           ``discover_tracks(keep_alive=True)``).  Reuses
-                          the process to avoid a second cluster-map build
-                          on slow sources.  The tracks header must already
+                          the process to avoid a second full read on
+                          slow sources.  The tracks header must already
                           be consumed; pass the parsed tracks list via
                           *existing_tracks*.
         existing_tracks:  Pre-parsed track dicts from the tracks header
