@@ -13,6 +13,7 @@ Download the latest release for your platform from the [Releases](https://github
 ### Requirements
 
 - Python 3.10+
+- [libpgs](https://github.com/matthane/libpgs) (bundled in release archives — only needed separately when running from source)
 - [NumPy](https://pypi.org/project/numpy/)
 - [Pillow](https://pypi.org/project/Pillow/)
 - [FFmpeg](https://ffmpeg.org/) (optional — only needed for the video stream dynamic range mismatch badge)
