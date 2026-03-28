@@ -9,6 +9,7 @@ display-set format used throughout ProofPGS.
 import base64
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
@@ -257,6 +258,98 @@ def stream_file(libpgs_path: str, input_path: str,
         if proc.poll() is None:
             proc.kill()
         proc.wait()
+
+
+# ---------------------------------------------------------------------------
+# Multi-track demuxed streaming (batch extraction without cues)
+# ---------------------------------------------------------------------------
+
+class QueueIterator:
+    """Wraps a Queue as an iterator, yielding items until a None sentinel."""
+
+    def __init__(self, q: queue.Queue):
+        self._q = q
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        item = self._q.get()
+        if item is None:
+            raise StopIteration
+        return item
+
+
+def stream_file_multi_track(libpgs_path: str, input_path: str,
+                            track_ids: list,
+                            queue_size: int = 64):
+    """Spawn a single libpgs process that streams multiple tracks.
+
+    Returns ``(queues, reader_thread, proc)`` where *queues* is
+    ``{track_id: QueueIterator}``.  A background reader thread demuxes
+    NDJSON lines by ``track_id`` into bounded per-track queues.
+    Each ``QueueIterator`` yields display sets until the stream ends.
+
+    This avoids re-reading the file from the start for each track,
+    which matters for containers without MKV Cues (no seeking).
+
+    Args:
+        libpgs_path:  Path to the libpgs binary.
+        input_path:   Path to container file.
+        track_ids:    List of track IDs to stream.
+        queue_size:   Max items per queue before backpressure (default 64).
+    """
+    cmd = [libpgs_path, "stream", input_path,
+           "-t", ",".join(str(tid) for tid in track_ids)]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+    raw_queues = {tid: queue.Queue(maxsize=queue_size) for tid in track_ids}
+    iterators = {tid: QueueIterator(q) for tid, q in raw_queues.items()}
+
+    def _reader():
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if obj.get("type") in ("tracks", None):
+                    continue
+                if obj.get("type") != "display_set":
+                    continue
+
+                tid = obj.get("track_id")
+                if tid is None or tid not in raw_queues:
+                    continue
+
+                ds = _convert_display_set(obj)
+                if ds is None:
+                    continue
+
+                raw_queues[tid].put(ds)
+        except Exception:
+            pass
+        finally:
+            # Signal end-of-stream to all consumers.
+            for q in raw_queues.values():
+                q.put(None)
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+
+    reader = threading.Thread(target=_reader, daemon=True)
+    reader.start()
+
+    return iterators, reader, proc
 
 
 # ---------------------------------------------------------------------------
