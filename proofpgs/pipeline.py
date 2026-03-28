@@ -352,19 +352,20 @@ def _print_track_listing(tracks, video_range=None):
 def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
                            tracks, track_modes, track_tags, tonemap,
                            nocrop, out_dir, threads):
-    """Extract all selected tracks in a single libpgs pass.
+    """Extract all selected tracks in a single libpgs pass (no limit).
 
-    Used when the container lacks MKV Cues — multiple passes would each
-    re-read the file from the start.  A reader thread demuxes the NDJSON
-    stream into per-track queues, and one consumer thread per track feeds
-    its queue into ``process_display_sets`` for overlapped rendering.
+    A reader thread demuxes the NDJSON stream into per-track queues,
+    and one consumer thread per track feeds its queue into
+    ``process_display_sets`` for overlapped rendering.  Using a single
+    libpgs invocation avoids redundant MKV header / cues parsing and
+    (for containers without cues) re-reading the file from the start.
 
     Returns total images saved across all tracks.
     """
     track_ids = [tracks[ti]["track_id"] for ti in selected_indices]
 
     try:
-        iterators, reader, proc = stream_file_multi_track(
+        iterators, reader, proc, mark_done = stream_file_multi_track(
             libpgs_path, input_path, track_ids)
     except Exception as e:
         print(f"  {error('[error]')} Multi-track extraction failed: {e}")
@@ -403,6 +404,119 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
     for t in consumer_threads:
         t.join()
     reader.join()
+
+    total = 0
+    for ti in selected_indices:
+        saved = results.get(ti, 0)
+        total += saved
+        if saved == 0:
+            tag = track_tags[ti]
+            print(f"  {dim(tag)}  No subtitles found.")
+    return total
+
+
+def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
+                               tracks, track_modes, track_tags, tonemap,
+                               nocrop, out_dir, threads, max_ds,
+                               preview_cache):
+    """Extract selected tracks with a per-track limit via a single libpgs pass.
+
+    Tracks whose analysis cache already contains enough content display
+    sets are rendered from cache.  The rest are streamed from a single
+    libpgs invocation with reader-side per-track limiting, avoiding
+    redundant MKV header / cues parsing for each track.
+
+    Returns total images saved across all tracks.
+    """
+    # Partition: tracks with sufficient cache vs those needing streaming.
+    cached_indices = []
+    stream_indices = []
+    for ti in selected_indices:
+        cached = preview_cache.get(ti)
+        content_ds = [d for d in (cached or []) if ds_has_content(d)]
+        if len(content_ds) >= max_ds:
+            cached_indices.append(ti)
+        else:
+            stream_indices.append(ti)
+
+    results = {}  # ti -> saved count
+    consumer_threads = []
+
+    # --- Stream tracks via single libpgs invocation ---
+    mark_done = None
+    if stream_indices:
+        track_ids = [tracks[ti]["track_id"] for ti in stream_indices]
+        try:
+            iterators, reader, proc, mark_done = stream_file_multi_track(
+                libpgs_path, input_path, track_ids, max_ds=max_ds)
+        except Exception as e:
+            print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+            return 0
+
+        for ti in stream_indices:
+            track = tracks[ti]
+            folder_name = build_track_folder_name(ti, track)
+            track_out = os.path.join(out_dir, folder_name)
+            track_label = f"Stream {track['index']}: {track['language']}"
+            if track["title"]:
+                track_label += f' "{track["title"]}"'
+
+            q_iter = iterators[track["track_id"]]
+            tid = track["track_id"]
+
+            def _consume(ti=ti, q_iter=q_iter, track_out=track_out,
+                         track_label=track_label, tid=tid):
+                try:
+                    saved = process_display_sets(
+                        q_iter, track_out, track_modes[ti], tonemap, nocrop,
+                        limit=max_ds,
+                        detection=tracks[ti].get("detection"),
+                        input_name=os.path.basename(input_path),
+                        track_name=track_label,
+                        threads=threads,
+                        track_tag=track_tags[ti],
+                    )
+                    results[ti] = saved
+                finally:
+                    if mark_done is not None:
+                        mark_done(tid)
+
+            t = threading.Thread(target=_consume)
+            t.start()
+            consumer_threads.append(t)
+
+    # --- Cached tracks: render from analysis cache in parallel ---
+    for ti in cached_indices:
+        track = tracks[ti]
+        folder_name = build_track_folder_name(ti, track)
+        track_out = os.path.join(out_dir, folder_name)
+        track_label = f"Stream {track['index']}: {track['language']}"
+        if track["title"]:
+            track_label += f' "{track["title"]}"'
+
+        cached = preview_cache[ti]
+
+        def _consume_cached(ti=ti, cached=cached, track_out=track_out,
+                            track_label=track_label):
+            saved = process_display_sets(
+                cached, track_out, track_modes[ti], tonemap, nocrop,
+                limit=max_ds,
+                detection=tracks[ti].get("detection"),
+                input_name=os.path.basename(input_path),
+                track_name=track_label,
+                threads=threads,
+                track_tag=track_tags[ti],
+            )
+            results[ti] = saved
+
+        t = threading.Thread(target=_consume_cached)
+        t.start()
+        consumer_threads.append(t)
+
+    for t in consumer_threads:
+        t.join()
+    if stream_indices:
+        reader.join()
 
     total = 0
     for ti in selected_indices:
@@ -643,9 +757,10 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
     total_saved = 0
 
-    # Batch path (no display-set limit) without cues and multiple tracks:
-    # single-pass demuxed extraction to avoid re-reading the file.
-    if max_ds is None and not has_cues and len(selected_indices) > 1:
+    # Batch path (no display-set limit) with multiple tracks:
+    # single-pass demuxed extraction avoids redundant MKV header / cues
+    # parsing and (for containers without cues) re-reading the file.
+    if max_ds is None and len(selected_indices) > 1:
         total_saved = _batch_extract_no_cues(
             libpgs_path, input_path, selected_indices, tracks,
             track_modes, track_tags, tonemap, nocrop, out_dir, threads)
@@ -654,6 +769,21 @@ def process_container(input_path: str, out_dir: str, mode: str,
               f"{len(selected_indices)} track(s) in {out_dir}/")
         return
 
+    # Batch path with per-track limit and multiple tracks: single libpgs
+    # pass with reader-side limiting.  Tracks with enough cached analysis
+    # data are rendered from cache without streaming.
+    if (max_ds is not None and max_ds != "cached"
+            and len(selected_indices) > 1):
+        total_saved = _batch_extract_with_limit(
+            libpgs_path, input_path, selected_indices, tracks,
+            track_modes, track_tags, tonemap, nocrop, out_dir, threads,
+            max_ds, preview_cache)
+        print()
+        print(f"{success('Done.')} {total_saved} total images across "
+              f"{len(selected_indices)} track(s) in {out_dir}/")
+        return
+
+    # Sequential path: single track, or cache-only mode.
     for ti in selected_indices:
         track = tracks[ti]
         folder_name = build_track_folder_name(ti, track)
@@ -676,9 +806,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             display_sets = cached
             effective_limit = DEFAULT_INTERACTIVE_COUNT
         elif max_ds is not None:
-            # Streaming path with limit.
+            # Streaming path with limit (single track).
             if len(content_ds) >= max_ds:
-                # Reuse cached analysis data when it has enough content.
                 display_sets = cached
             else:
                 try:
@@ -692,7 +821,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     continue
             effective_limit = max_ds
         else:
-            # Batch path: per-track streaming (cues available, can seek).
+            # Unlimited, single track.
             try:
                 ds_iter = stream_file(
                     libpgs_path, input_path,

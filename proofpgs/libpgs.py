@@ -242,7 +242,7 @@ def stream_file(libpgs_path: str, input_path: str,
 
 
 # ---------------------------------------------------------------------------
-# Multi-track demuxed streaming (batch extraction without cues)
+# Multi-track demuxed streaming (batch extraction)
 # ---------------------------------------------------------------------------
 
 class QueueIterator:
@@ -263,21 +263,33 @@ class QueueIterator:
 
 def stream_file_multi_track(libpgs_path: str, input_path: str,
                             track_ids: list,
+                            max_ds: int = None,
                             queue_size: int = 64):
     """Spawn a single libpgs process that streams multiple tracks.
 
-    Returns ``(queues, reader_thread, proc)`` where *queues* is
-    ``{track_id: QueueIterator}``.  A background reader thread demuxes
-    NDJSON lines by ``track_id`` into bounded per-track queues.
-    Each ``QueueIterator`` yields display sets until the stream ends.
+    Returns ``(iterators, reader_thread, proc, mark_done)`` where
+    *iterators* is ``{track_id: QueueIterator}`` and *mark_done* is
+    a callable ``mark_done(track_id)`` for early consumer termination.
 
-    This avoids re-reading the file from the start for each track,
-    which matters for containers without MKV Cues (no seeking).
+    A background reader thread demuxes NDJSON lines by ``track_id``
+    into bounded per-track queues.  Each ``QueueIterator`` yields
+    display sets until the stream ends.
+
+    When *max_ds* is set, the reader counts content display sets per
+    track and sends the ``None`` sentinel once the limit is reached,
+    discarding further data for that track to avoid backpressure
+    deadlocks.  Once all tracks are done, the subprocess is killed
+    early.
+
+    *mark_done(track_id)* lets a consumer signal early termination
+    (e.g. on error).  It marks the track as done and drains its
+    queue so the reader thread is never blocked putting to it.
 
     Args:
         libpgs_path:  Path to the libpgs binary.
         input_path:   Path to container file.
         track_ids:    List of track IDs to stream.
+        max_ds:       Per-track content display-set limit (None = no limit).
         queue_size:   Max items per queue before backpressure (default 64).
     """
     cmd = [libpgs_path, "stream", input_path,
@@ -292,7 +304,24 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
     raw_queues = {tid: queue.Queue(maxsize=queue_size) for tid in track_ids}
     iterators = {tid: QueueIterator(q) for tid, q in raw_queues.items()}
 
+    done_tracks = set()
+    done_lock = threading.Lock()
+
+    def mark_done(tid):
+        """Signal that a consumer is done with *tid* (error / early exit)."""
+        with done_lock:
+            done_tracks.add(tid)
+        # Drain the queue to unblock the reader if it's blocked on put().
+        q = raw_queues.get(tid)
+        if q is not None:
+            try:
+                while True:
+                    q.get_nowait()
+            except queue.Empty:
+                pass
+
     def _reader():
+        content_counts = {tid: 0 for tid in track_ids}
         try:
             for line in proc.stdout:
                 line = line.strip()
@@ -308,17 +337,37 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
                 if tid is None or tid not in raw_queues:
                     continue
 
+                with done_lock:
+                    if tid in done_tracks:
+                        if len(done_tracks) >= len(track_ids):
+                            break
+                        continue
+
                 ds = _convert_display_set(obj)
                 if ds is None:
                     continue
+
+                if max_ds is not None and ds_has_content(ds):
+                    content_counts[tid] += 1
+                    if content_counts[tid] >= max_ds:
+                        raw_queues[tid].put(ds)
+                        raw_queues[tid].put(None)  # sentinel
+                        with done_lock:
+                            done_tracks.add(tid)
+                            if len(done_tracks) >= len(track_ids):
+                                break
+                        continue
 
                 raw_queues[tid].put(ds)
         except Exception:
             pass
         finally:
-            # Signal end-of-stream to all consumers.
-            for q in raw_queues.values():
-                q.put(None)
+            # Signal end-of-stream to any consumers not yet done.
+            with done_lock:
+                for tid in track_ids:
+                    if tid not in done_tracks:
+                        raw_queues[tid].put(None)
+                        done_tracks.add(tid)
             try:
                 proc.stdout.close()
             except Exception:
@@ -330,7 +379,7 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
     reader = threading.Thread(target=_reader, daemon=True)
     reader.start()
 
-    return iterators, reader, proc
+    return iterators, reader, proc, mark_done
 
 
 # ---------------------------------------------------------------------------
