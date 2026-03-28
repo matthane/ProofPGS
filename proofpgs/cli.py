@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 
-from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
+from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS, parse_timestamp
 from .libpgs import check_libpgs
 from .pipeline import process_sup_file, process_container
 from .style import dim, error, info, success, warn
@@ -61,10 +61,30 @@ def _main():
                              "Use 'all' for all tracks. Default: prompt interactively")
     parser.add_argument("--nocrop", action="store_true",
                         help="Output full video-frame sized PNGs instead of cropping to content")
+    parser.add_argument("--start", default=None,
+                        help="Start timestamp for extraction "
+                             "(e.g. 0:05:00, 5:00, 300)")
+    parser.add_argument("--end", default=None,
+                        help="End timestamp for extraction "
+                             "(e.g. 0:10:00, 10:00, 600)")
     parser.add_argument("--threads", type=int, default=None,
                         help="Number of parallel rendering threads "
                              "(default: auto, up to 8)")
     args = parser.parse_args()
+
+    # Validate timestamps early.
+    for flag in ("start", "end"):
+        val = getattr(args, flag)
+        if val is not None:
+            try:
+                parse_timestamp(val)
+            except ValueError as e:
+                print(f"{error('[error]')} --{flag}: {e}", file=sys.stderr)
+                sys.exit(1)
+    if args.start is not None and args.end is not None:
+        if parse_timestamp(args.end) <= parse_timestamp(args.start):
+            print(f"{error('[error]')} --end must be after --start", file=sys.stderr)
+            sys.exit(1)
 
     if args.install:
         from .shellmenu import install
@@ -98,18 +118,21 @@ def _main():
                                  args.tonemap, args.first, args.nocrop,
                                  libpgs_path=libpgs_path,
                                  threads=args.threads,
-                                 interactive=True)
+                                 interactive=True,
+                                 start=args.start, end=args.end)
         if args.mode not in ("validate", "validate-fast"):
             print(f"\n{success('Done.')} {saved} images written to {args.out}/")
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
                           libpgs_path=libpgs_path,
-                          tracks_arg=args.tracks, threads=args.threads)
+                          tracks_arg=args.tracks, threads=args.threads,
+                          start=args.start, end=args.end)
     else:
         print(f"{warn('[warn]')} Unrecognised extension '{ext}'. "
               f"Attempting as container file...")
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
                           libpgs_path=libpgs_path,
-                          tracks_arg=args.tracks, threads=args.threads)
+                          tracks_arg=args.tracks, threads=args.threads,
+                          start=args.start, end=args.end)

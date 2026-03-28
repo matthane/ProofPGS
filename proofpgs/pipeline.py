@@ -351,7 +351,8 @@ def _print_track_listing(tracks, video_range=None):
 
 def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
                            tracks, track_modes, track_tags, tonemap,
-                           nocrop, out_dir, threads):
+                           nocrop, out_dir, threads,
+                           start=None, end=None):
     """Extract all selected tracks in a single libpgs pass (no limit).
 
     A reader thread demuxes the NDJSON stream into per-track queues,
@@ -366,7 +367,8 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
 
     try:
         iterators, reader, proc, mark_done = stream_file_multi_track(
-            libpgs_path, input_path, track_ids)
+            libpgs_path, input_path, track_ids,
+            start=start, end=end)
     except Exception as e:
         print(f"  {error('[error]')} Multi-track extraction failed: {e}")
         return 0
@@ -418,7 +420,7 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
 def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
                                tracks, track_modes, track_tags, tonemap,
                                nocrop, out_dir, threads, max_ds,
-                               preview_cache):
+                               preview_cache, start=None, end=None):
     """Extract selected tracks with a per-track limit via a single libpgs pass.
 
     Tracks whose analysis cache already contains enough content display
@@ -426,18 +428,25 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
     libpgs invocation with reader-side per-track limiting, avoiding
     redundant MKV header / cues parsing for each track.
 
+    When *start* or *end* is set, cache is bypassed because it contains
+    display sets from the beginning of the file, not the target range.
+
     Returns total images saved across all tracks.
     """
     # Partition: tracks with sufficient cache vs those needing streaming.
+    # When a time range is active, cache is from the wrong range — stream all.
     cached_indices = []
     stream_indices = []
-    for ti in selected_indices:
-        cached = preview_cache.get(ti)
-        content_ds = [d for d in (cached or []) if ds_has_content(d)]
-        if len(content_ds) >= max_ds:
-            cached_indices.append(ti)
-        else:
-            stream_indices.append(ti)
+    if start or end:
+        stream_indices = list(selected_indices)
+    else:
+        for ti in selected_indices:
+            cached = preview_cache.get(ti)
+            content_ds = [d for d in (cached or []) if ds_has_content(d)]
+            if len(content_ds) >= max_ds:
+                cached_indices.append(ti)
+            else:
+                stream_indices.append(ti)
 
     results = {}  # ti -> saved count
     consumer_threads = []
@@ -448,7 +457,8 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
         track_ids = [tracks[ti]["track_id"] for ti in stream_indices]
         try:
             iterators, reader, proc, mark_done = stream_file_multi_track(
-                libpgs_path, input_path, track_ids, max_ds=max_ds)
+                libpgs_path, input_path, track_ids, max_ds=max_ds,
+                start=start, end=end)
         except Exception as e:
             print(f"  {error('[error]')} Multi-track extraction failed: {e}")
             return 0
@@ -538,9 +548,12 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      input_name: str = None,
                      track_name: str = None,
                      threads: int = None,
-                     interactive: bool = False) -> int:
+                     interactive: bool = False,
+                     start: str = None,
+                     end: str = None) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
-    display_sets = list(stream_file(libpgs_path, sup_path))
+    display_sets = list(stream_file(libpgs_path, sup_path,
+                                    start=start, end=end))
     total = sum(1 for ds in display_sets if ds_has_content(ds))
     print(f"  {info('Found')} {bold(str(total))} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
@@ -584,7 +597,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
                       tonemap: str, first, nocrop: bool,
                       libpgs_path: str = None,
                       tracks_arg: str = None,
-                      threads: int = None) -> None:
+                      threads: int = None,
+                      start: str = None,
+                      end: str = None) -> None:
     """Extract and decode PGS tracks from a video container.
 
     All extraction is performed via libpgs streaming — no temp files.
@@ -593,8 +608,11 @@ def process_container(input_path: str, out_dir: str, mode: str,
     """
     # === Phase 1: Discover tracks via libpgs ===
     print(f"{info('Probing:')} {input_path}")
+    # When a time range is active, the discovery process (starting at
+    # byte 0) can't be reused for targeted extraction — disable keep_alive.
+    _keep_alive = start is None
     raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
-                                            keep_alive=True)
+                                            keep_alive=_keep_alive)
 
     if not raw_tracks:
         print(warn("No PGS subtitle tracks found."))
@@ -709,6 +727,12 @@ def process_container(input_path: str, out_dir: str, mode: str,
     else:
         max_ds = None  # process all — backward-compatible default
 
+    # When a time range is active, the analysis cache contains display
+    # sets from the beginning of the file — not the target range.
+    # Replace "cached" with a concrete count so we stream from the range.
+    if (start or end) and max_ds == "cached":
+        max_ds = DEFAULT_INTERACTIVE_COUNT
+
     # --- Resolve mode per track ---
     if mode == "auto":
         track_modes = {}
@@ -763,7 +787,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
     if max_ds is None and len(selected_indices) > 1:
         total_saved = _batch_extract_no_cues(
             libpgs_path, input_path, selected_indices, tracks,
-            track_modes, track_tags, tonemap, nocrop, out_dir, threads)
+            track_modes, track_tags, tonemap, nocrop, out_dir, threads,
+            start=start, end=end)
         print()
         print(f"{success('Done.')} {total_saved} total images across "
               f"{len(selected_indices)} track(s) in {out_dir}/")
@@ -777,7 +802,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         total_saved = _batch_extract_with_limit(
             libpgs_path, input_path, selected_indices, tracks,
             track_modes, track_tags, tonemap, nocrop, out_dir, threads,
-            max_ds, preview_cache)
+            max_ds, preview_cache, start=start, end=end)
         print()
         print(f"{success('Done.')} {total_saved} total images across "
               f"{len(selected_indices)} track(s) in {out_dir}/")
@@ -807,7 +832,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             effective_limit = DEFAULT_INTERACTIVE_COUNT
         elif max_ds is not None:
             # Streaming path with limit (single track).
-            if len(content_ds) >= max_ds:
+            # When a time range is active, cache is from the wrong range.
+            if not (start or end) and len(content_ds) >= max_ds:
                 display_sets = cached
             else:
                 try:
@@ -815,6 +841,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         libpgs_path, input_path,
                         track_id=track["track_id"],
                         max_ds=max_ds,
+                        start=start, end=end,
                     ))
                 except Exception as e:
                     print(f"  {error('[error]')} Streaming extraction failed: {e}")
@@ -826,6 +853,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 ds_iter = stream_file(
                     libpgs_path, input_path,
                     track_id=track["track_id"],
+                    start=start, end=end,
                 )
             except Exception as e:
                 print(f"  {error('[error]')} Extraction failed: {e}")

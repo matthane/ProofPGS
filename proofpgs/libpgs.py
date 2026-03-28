@@ -172,6 +172,8 @@ def discover_tracks(libpgs_path: str, input_path: str,
 def stream_file(libpgs_path: str, input_path: str,
                 track_id: int = None,
                 max_ds: int = None,
+                start: str = None,
+                end: str = None,
 ):
     """Stream display sets from libpgs for a single file/track.
 
@@ -186,6 +188,8 @@ def stream_file(libpgs_path: str, input_path: str,
         track_id:    Track ID to extract (None = first/only track).
         max_ds:      Stop after this many *content* display sets
                      (those with object data). None = read all.
+        start:       Start timestamp for targeted extraction (None = beginning).
+        end:         End timestamp for targeted extraction (None = end of file).
 
     Yields:
         Display sets in internal format.
@@ -193,6 +197,10 @@ def stream_file(libpgs_path: str, input_path: str,
     cmd = [libpgs_path, "stream", input_path]
     if track_id is not None:
         cmd += ["-t", str(track_id)]
+    if start is not None:
+        cmd += ["--start", start]
+    if end is not None:
+        cmd += ["--end", end]
 
     proc = subprocess.Popen(
         cmd,
@@ -264,7 +272,9 @@ class QueueIterator:
 def stream_file_multi_track(libpgs_path: str, input_path: str,
                             track_ids: list,
                             max_ds: int = None,
-                            queue_size: int = 64):
+                            queue_size: int = 64,
+                            start: str = None,
+                            end: str = None):
     """Spawn a single libpgs process that streams multiple tracks.
 
     Returns ``(iterators, reader_thread, proc, mark_done)`` where
@@ -291,9 +301,15 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
         track_ids:    List of track IDs to stream.
         max_ds:       Per-track content display-set limit (None = no limit).
         queue_size:   Max items per queue before backpressure (default 64).
+        start:        Start timestamp for targeted extraction (None = beginning).
+        end:          End timestamp for targeted extraction (None = end of file).
     """
     cmd = [libpgs_path, "stream", input_path,
            "-t", ",".join(str(tid) for tid in track_ids)]
+    if start is not None:
+        cmd += ["--start", start]
+    if end is not None:
+        cmd += ["--end", end]
 
     proc = subprocess.Popen(
         cmd,
@@ -393,7 +409,9 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                       track_check=None,
                       allow_restart: bool = True,
                       existing_proc=None,
-                      existing_tracks: list = None) -> tuple:
+                      existing_tracks: list = None,
+                      start: str = None,
+                      end: str = None) -> tuple:
     """Stream tracks from a single libpgs invocation, demultiplexed.
 
     Reads NDJSON lines from ``libpgs stream <file> [-t id,...]``
@@ -448,6 +466,10 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
         cmd = [libpgs_path, "stream", input_path]
         if track_ids:
             cmd += ["-t", ",".join(str(tid) for tid in track_ids)]
+        if start is not None:
+            cmd += ["--start", start]
+        if end is not None:
+            cmd += ["--end", end]
 
         if _DEBUG:
             print(f"  [DEBUG] libpgs cmd: {' '.join(cmd)}", flush=True)

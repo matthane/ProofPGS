@@ -1,5 +1,6 @@
 """Shared constants for the ProofPGS decoder."""
 
+import re
 import time
 
 
@@ -21,6 +22,35 @@ def format_time(seconds: float) -> str:
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+# Matches HH:MM:SS.ms, MM:SS.ms, SS.ms, or plain seconds (e.g. 300, 5.5).
+_TIMESTAMP_RE = re.compile(
+    r'^(?:'
+    r'(?P<h>\d+):(?P<m1>\d{1,2}):(?P<s1>\d{1,2}(?:\.\d+)?)'  # HH:MM:SS[.ms]
+    r'|(?P<m2>\d{1,2}):(?P<s2>\d{1,2}(?:\.\d+)?)'             # MM:SS[.ms]
+    r'|(?P<s3>\d+(?:\.\d+)?)'                                   # SS[.ms] or plain seconds
+    r')$'
+)
+
+
+def parse_timestamp(ts: str) -> float:
+    """Validate a timestamp string and return total seconds.
+
+    Accepts the same formats as libpgs: ``HH:MM:SS.ms``, ``MM:SS.ms``,
+    ``SS.ms``, or plain seconds (e.g. ``300``).
+
+    Raises ``ValueError`` on invalid input.
+    """
+    m = _TIMESTAMP_RE.match(ts.strip())
+    if not m:
+        raise ValueError(f"Invalid timestamp: {ts!r} "
+                         f"(expected HH:MM:SS.ms, MM:SS.ms, SS.ms, or seconds)")
+    if m.group("h") is not None:
+        return int(m.group("h")) * 3600 + int(m.group("m1")) * 60 + float(m.group("s1"))
+    if m.group("m2") is not None:
+        return int(m.group("m2")) * 60 + float(m.group("s2"))
+    return float(m.group("s3"))
 
 
 # ---------------------------------------------------------------------------
