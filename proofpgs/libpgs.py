@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 
-from .constants import format_time, ANALYSIS_RESTART_GRACE_S
+from .constants import ANALYSIS_RESTART_GRACE_S
 from .parser import ds_has_content
 from .style import error
 
@@ -172,7 +172,7 @@ def discover_tracks(libpgs_path: str, input_path: str,
 def stream_file(libpgs_path: str, input_path: str,
                 track_id: int = None,
                 max_ds: int = None,
-                show_progress: bool = False):
+):
     """Stream display sets from libpgs for a single file/track.
 
     Generator that spawns ``libpgs stream <file> [-t <track_id>]``,
@@ -186,7 +186,6 @@ def stream_file(libpgs_path: str, input_path: str,
         track_id:    Track ID to extract (None = first/only track).
         max_ds:      Stop after this many *content* display sets
                      (those with object data). None = read all.
-        show_progress: Show streaming progress line.
 
     Yields:
         Display sets in internal format.
@@ -202,7 +201,6 @@ def stream_file(libpgs_path: str, input_path: str,
     )
 
     content_count = 0
-    showed_progress = False
 
     try:
         for line in proc.stdout:
@@ -227,21 +225,6 @@ def stream_file(libpgs_path: str, input_path: str,
             if has_content:
                 content_count += 1
 
-            if show_progress:
-                pts = obj.get("pts", 0)
-                pos_s = pts / 90_000.0
-                pos_str = format_time(pos_s)
-                if max_ds is not None:
-                    print(f"\r  Streaming: {content_count}/{max_ds} subtitles "
-                          f"(at {pos_str} in file)   ",
-                          end="", flush=True)
-                    showed_progress = True
-                else:
-                    if content_count > 0 and content_count % 50 == 0:
-                        print(f"\r  Streaming: {content_count} subtitles "
-                              f"(at {pos_str} in file)   ",
-                              end="", flush=True)
-                        showed_progress = True
 
             yield ds
 
@@ -249,8 +232,6 @@ def stream_file(libpgs_path: str, input_path: str,
                 break
 
     finally:
-        if showed_progress:
-            print()  # newline after progress
         try:
             proc.stdout.close()
         except Exception:

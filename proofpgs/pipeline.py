@@ -565,22 +565,25 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 print(f"  {warn('No valid track numbers.')} Processing all tracks.")
                 selected_indices = list(range(len(tracks)))
     elif sys.stdin.isatty():
-        while True:
-            any_bailed = any(t.get("analysis_bailed") for t in tracks)
-            selection = select_tracks_interactive(tracks, has_bailed=any_bailed)
-            if selection == "validate":
-                bailed_indices = [
-                    i for i, t in enumerate(tracks)
-                    if t.get("analysis_bailed")
-                ]
-                _analyze_tracks(tracks, bailed_indices, libpgs_path,
-                                input_path, preview_cache,
-                                budget=None, has_cues=has_cues)
-                print(CURSOR_UP_CLEAR, end="", flush=True)
-                has_bailed = _print_track_listing(tracks, video_range=video_range)
-                continue
-            selected_indices = selection
-            break
+        if len(tracks) == 1 and not any(t.get("analysis_bailed") for t in tracks):
+            selected_indices = [0]
+        else:
+            while True:
+                any_bailed = any(t.get("analysis_bailed") for t in tracks)
+                selection = select_tracks_interactive(tracks, has_bailed=any_bailed)
+                if selection == "validate":
+                    bailed_indices = [
+                        i for i, t in enumerate(tracks)
+                        if t.get("analysis_bailed")
+                    ]
+                    _analyze_tracks(tracks, bailed_indices, libpgs_path,
+                                    input_path, preview_cache,
+                                    budget=None, has_cues=has_cues)
+                    print(CURSOR_UP_CLEAR, end="", flush=True)
+                    has_bailed = _print_track_listing(tracks, video_range=video_range)
+                    continue
+                selected_indices = selection
+                break
     else:
         selected_indices = list(range(len(tracks)))
 
@@ -683,7 +686,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         libpgs_path, input_path,
                         track_id=track["track_id"],
                         max_ds=max_ds,
-                        show_progress=True,
                     ))
                 except Exception as e:
                     print(f"  {error('[error]')} Streaming extraction failed: {e}")
@@ -721,8 +723,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
         if max_ds == "cached" and content_total > effective_limit:
             print(f"  {dim(tag)}  Collected {bold(str(content_total))} subtitle(s),"
                   f" rendering first {bold(str(effective_limit))}.")
-        else:
-            print(f"  {dim(tag)}  Collected {bold(str(content_total))} subtitle(s).")
         saved = process_display_sets(
             display_sets, track_out, track_modes[ti], tonemap, nocrop,
             limit=effective_limit,
