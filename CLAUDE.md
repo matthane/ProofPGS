@@ -67,8 +67,10 @@ When listing PGS tracks in a container, the analysis phase (SDR/HDR detection) r
 
 The budget is controlled by `LISTING_BUDGET_S` in `constants.py` (default 10s). The per-track display-set cap is `ANALYSIS_MAX_DS` (default 125).
 
-### Extraction starts from the beginning
-Both the analysis extraction and streaming extraction read from the start of the file. The interactive count prompt defaults to up to 10 cached analysis samples (`DEFAULT_INTERACTIVE_COUNT` in `constants.py`), with no additional extraction needed. The user can request a custom count or all subtitles.
+### Extraction starts from the beginning (unless `--start`/`--end`)
+By default, both analysis and streaming extraction read from the start of the file. The interactive count prompt defaults to up to 10 cached analysis samples (`DEFAULT_INTERACTIVE_COUNT` in `constants.py`), with no additional extraction needed. The user can request a custom count or all subtitles.
+
+When `--start` and/or `--end` are specified, extraction uses libpgs's targeted seeking to jump directly to the requested time range. Analysis still runs from the beginning — SDR/HDR detection is a track-level property, not range-dependent. Because the analysis cache contains display sets from the beginning of the file (not the target range), cache reuse is bypassed when a time range is active: the interactive "cached" default is converted to `DEFAULT_INTERACTIVE_COUNT` with fresh streaming from the target range, and the cache partition in `_batch_extract_with_limit()` forces all tracks to stream. The `discover_tracks(keep_alive=True)` process reuse optimization is also disabled when `--start` is set, since the discovery process starts at byte 0 and can't be reused for targeted extraction.
 
 ### Extraction via libpgs
 
@@ -80,6 +82,7 @@ All file I/O goes through the bundled `libpgs` binary, which streams PGS data as
 | `--first N` or custom interactive count (single track) | `libpgs stream <file> -t <id>` — pipe closed once N display sets collected. Reuses analysis cache if it already has enough content. |
 | `--first N` or custom interactive count (multi-track) | Single `libpgs stream <file> -t id1,id2,...` pass with reader-side per-track limiting. A reader thread demuxes into per-track queues and sends a sentinel once each track hits the limit; concurrent renderer threads consume the queues. Tracks with enough cached analysis data are rendered from cache without streaming. |
 | `--tracks all` (no limit), multiple tracks | Single `libpgs stream <file> -t id1,id2,...` pass. A reader thread demuxes into per-track queues consumed by concurrent renderer threads. Avoids redundant MKV header / cues parsing and (for containers without cues) re-reading the file from the start. |
+| `--start`/`--end` (any of the above) | Appends `--start`/`--end` to the libpgs command. libpgs seeks directly to the estimated byte offset — data before the start point is not read. Composes with `--first N` (first N content display sets within the range). Analysis is unaffected (always from byte 0). |
 
 ### SDR/HDR auto-detection via PQ plausibility analysis
 `--mode auto` (default) detects whether each PGS track was mastered for SDR or HDR by analyzing raw palette entries. Detection and mode resolution are **per-track** — each track is decoded with its own detected color pipeline independently. A container with mixed SDR and HDR tracks (e.g. SDR BD and UHD BD remuxed together) processes each track correctly without falling back to compare mode. Only tracks where detection is genuinely inconclusive fall back to compare. Video stream color metadata is intentionally not used because subtitle tracks may originate from different sources. Per the UHD BD spec (section 3.9), SDR subtitles are always BT.709 Y'CbCr regardless of the video stream's color primaries, while HDR subtitles are BT.2020 ST 2084 Y'CbCr with 8-bit values multiplied by 4 for 10-bit compositing.

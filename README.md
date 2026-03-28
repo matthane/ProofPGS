@@ -65,6 +65,23 @@ python -m proofpgs movie.mkv --tracks all
 python -m proofpgs movie.mkv --out ./my_output
 ```
 
+### Extract a specific time range
+
+Use `--start` and `--end` to extract subtitles from a specific portion of the file. libpgs seeks directly to the target offset — data before the start point is not read.
+
+```bash
+# Subtitles from 5 minutes onward:
+python -m proofpgs movie.mkv --start 0:05:00
+
+# Subtitles between 1:30:00 and 1:35:00:
+python -m proofpgs movie.mkv --start 1:30:00 --end 1:35:00
+
+# First 10 subtitles within a time window:
+python -m proofpgs movie.mkv --start 0:05:00 --end 0:10:00 --first 10
+```
+
+Timestamps accept `HH:MM:SS.ms`, `MM:SS.ms`, `SS.ms`, or plain seconds (e.g. `300`). `--start` and `--end` can be used independently or together, and compose with `--first`.
+
 ### Output modes
 
 ProofPGS has six output modes:
@@ -104,6 +121,8 @@ python -m proofpgs movie.mkv --mode validate-fast
 | `--tonemap` | `clip`, `reinhard` | `clip` | HDR-to-SDR tonemapping strategy. `clip` hard-clips at 203 nits reference white (best for subtitles). `reinhard` applies a soft roll-off. |
 | `--out` | path | `<filename>_pgs_output/` next to input file | Output directory. |
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
+| `--start` | timestamp | beginning | Start timestamp for extraction (e.g. `0:05:00`, `5:00`, `300`). Seeks directly to the target offset. |
+| `--end` | timestamp | end of file | End timestamp for extraction (e.g. `0:10:00`, `10:00`, `600`). |
 | `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
 | `--threads` | integer | auto (up to 8) | Number of parallel rendering threads. |
@@ -190,7 +209,7 @@ proofpgs/
   cli.py              # Argument parsing and main()
   constants.py        # PQ constants, segment types, file extensions
   detect.py           # SDR/HDR auto-detection via PQ plausibility analysis
-  parser.py           # PGS segment payload parsers, RLE decoder, bitmap entry scanner
+  parser.py           # Display set content check (ds_has_content)
   color.py            # Colour-space math and palette decoding (HDR & SDR)
   renderer.py         # Display set rendering and PNG output
   libpgs.py           # libpgs CLI adapter (subprocess streaming)
