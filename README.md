@@ -173,7 +173,7 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 **Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), ProofPGS closes the libpgs pipe once enough display sets have been collected. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
 
-**Batch extraction:** When processing all subtitles (`--tracks all` with no `--first` limit), libpgs streams the full track contents and display sets are fed directly into the renderer so extraction and rendering overlap. For containers with MKV Cues, each track is extracted in its own pass since libpgs can seek directly to each track's data. For containers without Cues, all tracks are extracted in a single pass to avoid re-reading the file — a reader thread demuxes the stream into per-track queues consumed by concurrent renderers.
+**Single-pass multi-track extraction:** When multiple tracks are selected, all tracks are extracted in a single libpgs invocation — regardless of whether the container has MKV Cues. A reader thread demuxes the NDJSON stream into per-track queues consumed by concurrent renderers. For limited extractions (e.g. `--first 100`), the reader enforces per-track limits and terminates the subprocess once all tracks are satisfied. This avoids redundant MKV header / cues parsing that would otherwise cause pauses between tracks, especially on network storage.
 
 **Multi-threaded rendering:** PNG rendering uses multiple threads by default (auto-detected, up to 8). Override with `--threads`.
 
