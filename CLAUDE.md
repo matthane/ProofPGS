@@ -27,13 +27,13 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `pipeline.py` | High-level orchestration — ties everything together |
 | `color.py` | All colour-space math and palette LUT construction |
 | `detect.py` | SDR/HDR auto-detection via PQ plausibility analysis |
-| `parser.py` | PGS segment payload parsers (`parse_pcs`, `parse_pds`, `parse_ods`), RLE decoder, `rle_used_entries()`, `ds_has_content()` |
+| `parser.py` | `ds_has_content()` — checks if a display set has renderable content |
 | `renderer.py` | Multi-threaded display set rendering and PNG output |
-| `libpgs.py` | Adapter for the libpgs CLI — subprocess streaming, track discovery, segment conversion |
+| `libpgs.py` | Adapter for the libpgs CLI — subprocess streaming, track discovery, display-set conversion |
 | `ffmpeg.py` | ffprobe video range detection (`probe_video_range()`), track folder naming |
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | Windows Explorer context menu install/uninstall via registry |
-| `constants.py` | PQ constants, segment type codes, file extensions, analysis budget (`Budget` class) |
+| `constants.py` | PQ constants, file extensions, analysis budget (`Budget` class) |
 | `style.py` | Terminal styling helpers (colours, badges, cursor control) |
 | `assets/` | Bundled resources (fonts, icons) — accessed via `Path(__file__).resolve().parent / "assets"` |
 | `bin/` | Bundled libpgs binary (platform-specific, gitignored) |
@@ -72,7 +72,7 @@ Both the analysis extraction and streaming extraction read from the start of the
 
 ### Extraction via libpgs
 
-All file I/O goes through the bundled `libpgs` binary, which streams PGS data as NDJSON over a subprocess pipe. No temp files are created — display sets are streamed into memory. The libpgs adapter (`libpgs.py`) handles subprocess management, NDJSON parsing, base64 decoding of segment payloads, and segment type mapping.
+All file I/O goes through the bundled `libpgs` binary, which streams PGS data as NDJSON over a subprocess pipe. No temp files are created — display sets are streamed into memory. libpgs handles RLE decoding and object fragment reassembly, outputting pre-decoded bitmap data (base64-encoded palette indices). The libpgs adapter (`libpgs.py`) handles subprocess management, NDJSON parsing, and conversion to the internal display-set format.
 
 | Situation | Strategy |
 |---|---|
@@ -85,7 +85,7 @@ All file I/O goes through the bundled `libpgs` binary, which streams PGS data as
 
 Output filenames include the decoded range as a suffix: `ds_0001_1234ms_sdr.png`, `ds_0001_1234ms_hdr.png`, or `ds_0001_1234ms_compare.png`.
 
-**Fade-in / ghost entry filtering.** Before analyzing palette entries, detection scans each display set's RLE bitmap via `rle_used_entries()` (a lightweight walker that collects palette entry IDs without expanding to a pixel array). Only palette entries actually referenced by the bitmap are considered. This is critical because PGS fade-in frames define the full palette — including the bright text colour at high alpha — but only reference dim, low-alpha entries in the actual bitmap. Without this filter, a single unreferenced "ghost" palette entry (e.g. Y=200, A=192) could dominate the PQ metric and trigger a false SDR verdict on HDR content. Additionally, entries with alpha < 32 are excluded (`_MIN_ALPHA` in `detect.py`), filtering out anti-aliasing fringe and fade-in ramp entries that are functionally invisible.
+**Fade-in / ghost entry filtering.** Before analyzing palette entries, detection collects the set of palette entry IDs actually referenced by each object's bitmap (`set(obj["bitmap"])` — each byte is a palette index). Only palette entries actually referenced by the bitmap are considered. This is critical because PGS fade-in frames define the full palette — including the bright text colour at high alpha — but only reference dim, low-alpha entries in the actual bitmap. Without this filter, a single unreferenced "ghost" palette entry (e.g. Y=200, A=192) could dominate the PQ metric and trigger a false SDR verdict on HDR content. Additionally, entries with alpha < 32 are excluded (`_MIN_ALPHA` in `detect.py`), filtering out anti-aliasing fringe and fade-in ramp entries that are functionally invisible.
 
 **Primary signal: PQ plausibility test.** Each visible, bitmap-referenced palette entry (Y > 50, alpha >= 32) is decoded YCbCr → R'G'B' using the BT.2020 matrix. The **95th percentile** of unique PQ channel values is used as the representative metric — this requires at least 5% of distinct palette entries to exceed the threshold before triggering the SDR signal, making it robust against outlier glow/gradient/saturated entries that can appear in HDR content (e.g., animated title sequences with complex graphics). For small sample sizes (fewer than 20 unique values), the percentile index is clamped to always exclude at least the top unique value, preventing a single outlier from dominating the metric. If this representative value exceeds the PQ code value for 1000 nits (~0.75), the PQ interpretation implies unrealistic luminance for the bulk of entries, meaning the content is gamma-encoded SDR. If it stays below 0.65 (~400 nits), the PQ interpretation is plausible and the content is HDR. This test is particularly effective for colored text (gold, yellow, cyan) where Y-only thresholds are ambiguous — e.g., SDR gold text at Y=178 gives R'≈0.92 under BT.2020, corresponding to ~4800 nits in PQ (obviously SDR), while genuine HDR text at 203 nits gives R'≈0.58 (~200 nits).
 
