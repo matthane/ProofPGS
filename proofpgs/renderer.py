@@ -358,7 +358,8 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
                          limit: int = None, detection: dict = None,
                          input_name: str = None,
                          track_name: str = None,
-                         threads: int = None) -> int:
+                         threads: int = None,
+                         track_tag: str = None) -> int:
     """Render display sets and save PNGs to out_dir.
 
     *display_sets* may be a list or any iterable (including a generator).
@@ -372,6 +373,8 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
                   None means no limit.
         threads:  Number of parallel rendering threads.
                   None = auto (up to 8), 1 = sequential.
+        track_tag: Short label (e.g. "eng") prefixed to each output line.
+                   None omits the prefix (single-track / .sup files).
 
     Returns images saved.
     """
@@ -390,8 +393,11 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
             return _render_and_save(item[1], item[0], out_dir, mode,
                                     tonemap, nocrop)
 
+    tag_prefix = f"  {dim(track_tag)}  " if track_tag else "  "
+    folder_hint = os.path.basename(out_dir)
+
     def _print_result(idx, pts_ms, fname):
-        print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
+        print(f"{tag_prefix}{dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(f'{folder_hint}/{fname}')}")
 
     # --- Sequential fast path (no threading overhead) ---
     if num_threads <= 1:
