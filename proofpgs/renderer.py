@@ -353,13 +353,18 @@ def _render_and_save_compare(ds, i, out_dir, nocrop, res):
     return (i, pts_ms, fname)
 
 
-def process_display_sets(display_sets: list, out_dir: str, mode: str,
+def process_display_sets(display_sets, out_dir: str, mode: str,
                          tonemap: str, nocrop: bool,
                          limit: int = None, detection: dict = None,
                          input_name: str = None,
                          track_name: str = None,
                          threads: int = None) -> int:
     """Render display sets and save PNGs to out_dir.
+
+    *display_sets* may be a list or any iterable (including a generator).
+    When a generator is passed, rendering starts as display sets arrive
+    rather than waiting for extraction to finish — overlapping I/O-bound
+    extraction with CPU-bound rendering.
 
     Args:
         limit:    Max number of *rendered* images to produce.  Display sets
@@ -373,19 +378,6 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
     os.makedirs(out_dir, exist_ok=True)
     num_threads = _resolve_threads(threads)
 
-    # --- Pre-select work items (respecting limit) ---
-    work_items = []  # (original_index, ds)
-    content_count = 0
-    for i, ds in enumerate(display_sets):
-        work_items.append((i, ds))
-        if ds_has_content(ds):
-            content_count += 1
-            if limit is not None and content_count >= limit:
-                break
-
-    if not work_items:
-        return 0
-
     # --- Build worker function ---
     if mode == "compare":
         res = _build_compare_resources(detection, tonemap, input_name,
@@ -398,42 +390,75 @@ def process_display_sets(display_sets: list, out_dir: str, mode: str,
             return _render_and_save(item[1], item[0], out_dir, mode,
                                     tonemap, nocrop)
 
+    def _print_result(idx, pts_ms, fname):
+        print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
+
     # --- Sequential fast path (no threading overhead) ---
     if num_threads <= 1:
         saved = 0
-        for item in work_items:
-            idx, pts_ms, fname = _worker(item)
+        content_count = 0
+        for i, ds in enumerate(display_sets):
+            idx, pts_ms, fname = _worker((i, ds))
             if fname is not None:
                 saved += 1
-                print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
+                _print_result(idx, pts_ms, fname)
+            if ds_has_content(ds):
+                content_count += 1
+                if limit is not None and content_count >= limit:
+                    break
         return saved
 
     # --- Parallel path with ordered output ---
+    # Consume the iterable incrementally, submitting work to the pool
+    # as display sets arrive.  Results are buffered and printed in order.
     saved = 0
     results_buf = {}
     next_to_print = 0
+    content_count = 0
 
     with ThreadPoolExecutor(max_workers=num_threads) as pool:
-        future_to_seq = {}
-        for seq, item in enumerate(work_items):
-            fut = pool.submit(_worker, item)
-            future_to_seq[fut] = seq
+        futures = {}  # future -> seq
+        seq = 0
 
-        for fut in as_completed(future_to_seq):
-            seq = future_to_seq[fut]
+        for i, ds in enumerate(display_sets):
+            fut = pool.submit(_worker, (i, ds))
+            futures[fut] = seq
+            seq += 1
+
+            if ds_has_content(ds):
+                content_count += 1
+                if limit is not None and content_count >= limit:
+                    break
+
+            # Opportunistically drain completed futures (non-blocking)
+            done_futs = [f for f in futures if f.done()]
+            for f in done_futs:
+                s = futures.pop(f)
+                try:
+                    results_buf[s] = f.result()
+                except Exception:
+                    results_buf[s] = (i, 0.0, None)
+
+                while next_to_print in results_buf:
+                    idx, pts_ms, fname = results_buf.pop(next_to_print)
+                    if fname is not None:
+                        saved += 1
+                        _print_result(idx, pts_ms, fname)
+                    next_to_print += 1
+
+        # Drain remaining futures
+        for fut in as_completed(futures):
+            s = futures[fut]
             try:
-                result = fut.result()
+                results_buf[s] = fut.result()
             except Exception:
-                orig_i = work_items[seq][0]
-                result = (orig_i, 0.0, None)
-            results_buf[seq] = result
+                results_buf[s] = (0, 0.0, None)
 
-            # Drain consecutive completed results in order
             while next_to_print in results_buf:
                 idx, pts_ms, fname = results_buf.pop(next_to_print)
                 if fname is not None:
                     saved += 1
-                    print(f"  {dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(fname)}")
+                    _print_result(idx, pts_ms, fname)
                 next_to_print += 1
 
     return saved

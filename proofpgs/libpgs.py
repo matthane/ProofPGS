@@ -171,11 +171,13 @@ def discover_tracks(libpgs_path: str, input_path: str,
 def stream_file(libpgs_path: str, input_path: str,
                 track_id: int = None,
                 max_ds: int = None,
-                show_progress: bool = False) -> list:
+                show_progress: bool = False):
     """Stream display sets from libpgs for a single file/track.
 
-    Spawns ``libpgs stream <file> [-t <track_id>]``, reads NDJSON lines,
-    and converts each display_set into internal format.
+    Generator that spawns ``libpgs stream <file> [-t <track_id>]``,
+    reads NDJSON lines, and yields each display set in internal format
+    as it arrives.  The subprocess is cleaned up when the generator is
+    exhausted or closed (e.g. when the consumer stops iterating).
 
     Args:
         libpgs_path: Path to the libpgs binary.
@@ -185,8 +187,8 @@ def stream_file(libpgs_path: str, input_path: str,
                      (those with object data). None = read all.
         show_progress: Show streaming progress line.
 
-    Returns:
-        List of display sets in internal format.
+    Yields:
+        Display sets in internal format.
     """
     cmd = [libpgs_path, "stream", input_path]
     if track_id is not None:
@@ -198,7 +200,6 @@ def stream_file(libpgs_path: str, input_path: str,
         stderr=subprocess.DEVNULL,
     )
 
-    display_sets = []
     content_count = 0
     showed_progress = False
 
@@ -221,7 +222,6 @@ def stream_file(libpgs_path: str, input_path: str,
             if ds is None:
                 continue
 
-            display_sets.append(ds)
             has_content = ds_has_content(ds)
             if has_content:
                 content_count += 1
@@ -242,10 +242,14 @@ def stream_file(libpgs_path: str, input_path: str,
                               end="", flush=True)
                         showed_progress = True
 
+            yield ds
+
             if max_ds is not None and content_count >= max_ds:
                 break
 
     finally:
+        if showed_progress:
+            print()  # newline after progress
         try:
             proc.stdout.close()
         except Exception:
@@ -253,10 +257,6 @@ def stream_file(libpgs_path: str, input_path: str,
         if proc.poll() is None:
             proc.kill()
         proc.wait()
-
-    if showed_progress:
-        print()  # newline after progress
-    return display_sets
 
 
 # ---------------------------------------------------------------------------

@@ -344,7 +344,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      threads: int = None,
                      interactive: bool = False) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
-    display_sets = stream_file(libpgs_path, sup_path)
+    display_sets = list(stream_file(libpgs_path, sup_path))
     total = sum(1 for ds in display_sets if ds_has_content(ds))
     print(f"  {info('Found')} {bold(str(total))} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
@@ -569,6 +569,10 @@ def process_container(input_path: str, out_dir: str, mode: str,
         content_ds = ([d for d in cached if ds_has_content(d)]
                       if cached else [])
 
+        track_label = f"Stream {track['index']}: {track['language']}"
+        if track["title"]:
+            track_label += f' "{track["title"]}"'
+
         if max_ds is not None and max_ds == "cached":
             # Cache-only mode: use whatever was collected during analysis.
             if not content_ds:
@@ -584,28 +588,40 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 display_sets = cached
             else:
                 try:
-                    display_sets = stream_file(
+                    display_sets = list(stream_file(
                         libpgs_path, input_path,
                         track_id=track["track_id"],
                         max_ds=max_ds,
                         show_progress=True,
-                    )
+                    ))
                 except Exception as e:
                     print(f"  {error('[error]')} Streaming extraction failed: {e}")
                     continue
             effective_limit = max_ds
         else:
-            # Batch path: stream all display sets for this track.
+            # Batch path: stream directly into the renderer so extraction
+            # and rendering overlap (I/O-bound + CPU-bound in parallel).
             try:
-                display_sets = stream_file(
+                ds_iter = stream_file(
                     libpgs_path, input_path,
                     track_id=track["track_id"],
-                    show_progress=True,
                 )
             except Exception as e:
                 print(f"  {error('[error]')} Extraction failed: {e}")
                 continue
-            effective_limit = None
+            saved = process_display_sets(
+                ds_iter, track_out, track_modes[ti], tonemap, nocrop,
+                limit=None,
+                detection=tracks[ti].get("detection"),
+                input_name=os.path.basename(input_path),
+                track_name=track_label,
+                threads=threads,
+            )
+            total_saved += saved
+            if saved == 0:
+                print("  No subtitles found.")
+            print()
+            continue
 
         if not display_sets:
             print("  No subtitles found.")
@@ -618,9 +634,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
                   f" rendering first {bold(str(effective_limit))}.")
         else:
             print(f"  Collected {bold(str(content_total))} subtitle(s).")
-        track_label = f"Stream {track['index']}: {track['language']}"
-        if track["title"]:
-            track_label += f' "{track["title"]}"'
         saved = process_display_sets(
             display_sets, track_out, track_modes[ti], tonemap, nocrop,
             limit=effective_limit,
