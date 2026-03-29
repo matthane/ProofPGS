@@ -611,8 +611,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
     # When a time range is active, the discovery process (starting at
     # byte 0) can't be reused for targeted extraction — disable keep_alive.
     _keep_alive = start is None
-    raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
-                                            keep_alive=_keep_alive)
+    if _keep_alive:
+        raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
+                                                keep_alive=True)
+    else:
+        raw_tracks = discover_tracks(libpgs_path, input_path,
+                                     keep_alive=False)
+        kept_proc = None
 
     if not raw_tracks:
         print(warn("No PGS subtitle tracks found."))
