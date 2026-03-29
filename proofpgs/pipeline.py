@@ -9,7 +9,8 @@ from .parser import ds_has_content
 from .renderer import process_display_sets
 from .detect import detect_from_palettes, format_detection
 from .libpgs import (stream_file, discover_tracks, stream_all_tracks,
-                     stream_file_multi_track)
+                     stream_file_multi_track,
+                     stream_file_multi_track_progressive)
 from .ffmpeg import probe_video_range, build_track_folder_name, check_ffprobe
 from .interactive import (
     select_tracks_interactive, select_count_interactive,
@@ -420,13 +421,19 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
 def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
                                tracks, track_modes, track_tags, tonemap,
                                nocrop, out_dir, threads, max_ds,
-                               preview_cache, start=None, end=None):
-    """Extract selected tracks with a per-track limit via a single libpgs pass.
+                               preview_cache, start=None, end=None,
+                               has_cues=False):
+    """Extract selected tracks with a per-track limit.
 
     Tracks whose analysis cache already contains enough content display
-    sets are rendered from cache.  The rest are streamed from a single
-    libpgs invocation with reader-side per-track limiting, avoiding
-    redundant MKV header / cues parsing for each track.
+    sets are rendered from cache.  The rest are streamed from libpgs
+    with reader-side per-track limiting.
+
+    When *has_cues* is True and multiple tracks need streaming, a
+    progressive multi-pass strategy is used: as each track reaches its
+    quota, libpgs is restarted with only the remaining tracks, avoiding
+    seeks through completed tracks' MKV cue entries.  When False (or
+    only one stream track), a single libpgs pass is used.
 
     When *start* or *end* is set, cache is bypassed because it contains
     display sets from the beginning of the file, not the target range.
@@ -451,17 +458,32 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
     results = {}  # ti -> saved count
     consumer_threads = []
 
-    # --- Stream tracks via single libpgs invocation ---
+    # --- Stream tracks via libpgs ---
     mark_done = None
     if stream_indices:
         track_ids = [tracks[ti]["track_id"] for ti in stream_indices]
-        try:
-            iterators, reader, proc, mark_done = stream_file_multi_track(
-                libpgs_path, input_path, track_ids, max_ds=max_ds,
-                start=start, end=end)
-        except Exception as e:
-            print(f"  {error('[error]')} Multi-track extraction failed: {e}")
-            return 0
+
+        # Progressive multi-pass: when cues are available and multiple
+        # tracks need streaming, restart libpgs with fewer tracks as
+        # each fills its quota — avoids seeking through completed
+        # tracks' cue entries, dramatically speeding up sparse tracks.
+        if has_cues and len(stream_indices) > 1:
+            try:
+                iterators, reader, mark_done = \
+                    stream_file_multi_track_progressive(
+                        libpgs_path, input_path, track_ids, max_ds=max_ds,
+                        start=start, end=end)
+            except Exception as e:
+                print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+                return 0
+        else:
+            try:
+                iterators, reader, proc, mark_done = stream_file_multi_track(
+                    libpgs_path, input_path, track_ids, max_ds=max_ds,
+                    start=start, end=end)
+            except Exception as e:
+                print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+                return 0
 
         for ti in stream_indices:
             track = tracks[ti]
@@ -807,7 +829,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
         total_saved = _batch_extract_with_limit(
             libpgs_path, input_path, selected_indices, tracks,
             track_modes, track_tags, tonemap, nocrop, out_dir, threads,
-            max_ds, preview_cache, start=start, end=end)
+            max_ds, preview_cache, start=start, end=end,
+            has_cues=has_cues)
         print()
         print(f"{success('Done.')} {total_saved} total images across "
               f"{len(selected_indices)} track(s) in {out_dir}/")

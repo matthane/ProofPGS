@@ -398,6 +398,171 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
     return iterators, reader, proc, mark_done
 
 
+def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
+                                        track_ids: list,
+                                        max_ds: int,
+                                        queue_size: int = 64,
+                                        start: str = None,
+                                        end: str = None):
+    """Multi-pass variant that restarts libpgs with fewer tracks.
+
+    When a track reaches its per-track content display-set limit, the
+    libpgs process is killed and restarted with only the remaining
+    (unfilled) tracks.  This avoids seeking through completed tracks'
+    MKV cue entries, dramatically speeding up collection of sparse
+    tracks.
+
+    A short grace period (``ANALYSIS_RESTART_GRACE_S``) after a track
+    completes allows co-located language tracks at the same timestamps
+    to also complete before restarting.
+
+    Returns ``(iterators, reader_thread, mark_done)`` where *iterators*
+    is ``{track_id: QueueIterator}``.  The reader thread manages
+    subprocess lifecycle internally across multiple passes.
+    """
+    bridge_queues = {tid: queue.Queue(maxsize=queue_size) for tid in track_ids}
+    iterators = {tid: QueueIterator(q) for tid, q in bridge_queues.items()}
+
+    done_tracks = set()
+    done_lock = threading.Lock()
+
+    def mark_done(tid):
+        """Signal that a consumer is done with *tid* (error / early exit)."""
+        with done_lock:
+            done_tracks.add(tid)
+        q = bridge_queues.get(tid)
+        if q is not None:
+            try:
+                while True:
+                    q.get_nowait()
+            except queue.Empty:
+                pass
+
+    def _reader():
+        remaining_tids = list(track_ids)
+        content_counts = {tid: 0 for tid in track_ids}
+        total_forwarded = {tid: 0 for tid in track_ids}
+
+        while remaining_tids:
+            cmd = [libpgs_path, "stream", input_path,
+                   "-t", ",".join(str(tid) for tid in remaining_tids)]
+            if start is not None:
+                cmd += ["--start", start]
+            if end is not None:
+                cmd += ["--end", end]
+
+            if _DEBUG:
+                print(f"\n  [DEBUG] Progressive pass: streaming "
+                      f"{len(remaining_tids)} track(s): {remaining_tids}",
+                      flush=True)
+
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+            pass_ds_seen = {tid: 0 for tid in remaining_tids}
+            last_completed_at = None
+            newly_completed = set()
+
+            try:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    if obj.get("type") != "display_set":
+                        continue
+
+                    tid = obj.get("track_id")
+                    if tid is None or tid not in bridge_queues:
+                        continue
+
+                    with done_lock:
+                        if tid in done_tracks:
+                            if len(done_tracks) >= len(track_ids):
+                                break
+                            # Grace-period restart check.
+                            if (last_completed_at is not None
+                                    and time.monotonic() - last_completed_at
+                                    >= ANALYSIS_RESTART_GRACE_S):
+                                break
+                            continue
+
+                    # Skip display sets already forwarded in prior passes.
+                    pass_ds_seen[tid] = pass_ds_seen.get(tid, 0) + 1
+                    if pass_ds_seen[tid] <= total_forwarded[tid]:
+                        continue
+
+                    ds = _convert_display_set(obj)
+                    if ds is None:
+                        continue
+
+                    bridge_queues[tid].put(ds)
+                    total_forwarded[tid] += 1
+
+                    if ds_has_content(ds):
+                        content_counts[tid] += 1
+                        if content_counts[tid] >= max_ds:
+                            bridge_queues[tid].put(None)  # sentinel
+                            with done_lock:
+                                done_tracks.add(tid)
+                                newly_completed.add(tid)
+                                if len(done_tracks) >= len(track_ids):
+                                    break
+                            last_completed_at = time.monotonic()
+
+                    # Grace-period restart: a track completed and the
+                    # grace window elapsed — break to restart with fewer
+                    # tracks.
+                    if (last_completed_at is not None
+                            and time.monotonic() - last_completed_at
+                            >= ANALYSIS_RESTART_GRACE_S):
+                        with done_lock:
+                            if len(done_tracks) < len(track_ids):
+                                if _DEBUG:
+                                    print(f"\n  [DEBUG] Progressive: grace "
+                                          f"expired, {len(done_tracks)}/"
+                                          f"{len(track_ids)} done — "
+                                          f"restarting", flush=True)
+                                break
+            except Exception:
+                pass
+            finally:
+                try:
+                    proc.stdout.close()
+                except Exception:
+                    pass
+                if proc.poll() is None:
+                    proc.kill()
+                proc.wait()
+
+            # Update remaining tracks.
+            with done_lock:
+                remaining_tids = [tid for tid in remaining_tids
+                                  if tid not in done_tracks]
+
+            # If no tracks completed in this pass and remaining tracks
+            # exist, they likely have no more data — stop to avoid an
+            # infinite loop.
+            if not newly_completed and remaining_tids:
+                if _DEBUG:
+                    print(f"  [DEBUG] Progressive: no tracks completed, "
+                          f"{len(remaining_tids)} remaining — stopping",
+                          flush=True)
+                break
+
+        # Send sentinels for any tracks that didn't reach their limit.
+        with done_lock:
+            for tid in track_ids:
+                if tid not in done_tracks:
+                    bridge_queues[tid].put(None)
+                    done_tracks.add(tid)
+
+    reader = threading.Thread(target=_reader, daemon=True)
+    reader.start()
+
+    return iterators, reader, mark_done
+
+
 # ---------------------------------------------------------------------------
 # Multi-track streaming (analysis / all-track extraction)
 # ---------------------------------------------------------------------------
