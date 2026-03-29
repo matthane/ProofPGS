@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proofpgs"
+dynamic = ["version"]
+description = "PGS subtitle decoder with HDR and SDR support"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE.txt", "LICENSES/*"]
+requires-python = ">=3.10"
+dependencies = ["numpy", "pillow"]
+keywords = ["pgs", "subtitles", "blu-ray", "hdr", "sdr"]
+
+[project.urls]
+Homepage = "https://github.com/matthane/ProofPGS"
+Repository = "https://github.com/matthane/ProofPGS"
+
+[project.scripts]
+proofpgs = "proofpgs.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "proofpgs.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["proofpgs*"]
+
+[tool.setuptools.package-data]
+proofpgs = [
+    "bin/libpgs",
+    "bin/libpgs.exe",
+    "assets/*.ttf",
+    "assets/*.png",
+    "assets/*.ico",
+]
