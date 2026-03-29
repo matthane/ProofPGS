@@ -36,6 +36,16 @@ def _all_extensions():
     return sorted(SUP_EXTENSIONS | CONTAINER_EXTENSIONS)
 
 
+def _is_pip_installed() -> bool:
+    """Check whether ProofPGS was installed as a pip package."""
+    from importlib.metadata import PackageNotFoundError, metadata
+    try:
+        metadata("proofpgs")
+        return True
+    except PackageNotFoundError:
+        return False
+
+
 def _project_root() -> str:
     """Return the project root directory (parent of the proofpgs package)."""
     import os
@@ -59,10 +69,19 @@ def _icon_path() -> str:
     return str(Path(__file__).resolve().parent / "assets" / f"proofpgs-icon-{variant}.ico")
 
 
-def _build_command(python_exe: str, project_dir: str,
-                   mode: str, use_pause: bool) -> str:
-    """Build the shell command string for a context menu entry."""
-    base = f'cd /d "{project_dir}" && "{python_exe}" -m proofpgs "%1" --mode {mode}'
+def _build_command(mode: str, use_pause: bool, *,
+                   proofpgs_exe: str | None = None,
+                   python_exe: str | None = None,
+                   project_dir: str | None = None) -> str:
+    """Build the shell command string for a context menu entry.
+
+    When *proofpgs_exe* is given (pip install), the command invokes it directly.
+    Otherwise *python_exe* and *project_dir* are used (source / archive install).
+    """
+    if proofpgs_exe:
+        base = f'"{proofpgs_exe}" "%1" --mode {mode}'
+    else:
+        base = f'cd /d "{project_dir}" && "{python_exe}" -m proofpgs "%1" --mode {mode}'
     if use_pause:
         return f'cmd.exe /c "{base} & pause"'
     return f'cmd.exe /k "{base}"'
@@ -127,14 +146,25 @@ def install():
         sys.exit(1)
 
     import winreg
+    import shutil
 
-    python_exe = sys.executable
-    if not python_exe:
-        print(f"{error('[error]')} Could not determine Python executable path.",
-              file=sys.stderr)
-        sys.exit(1)
+    pip_installed = _is_pip_installed()
 
-    project_dir = _project_root()
+    if pip_installed:
+        proofpgs_exe = shutil.which("proofpgs")
+        if not proofpgs_exe:
+            print(f"{error('[error]')} proofpgs is pip-installed but the "
+                  f"'proofpgs' command was not found on PATH.", file=sys.stderr)
+            sys.exit(1)
+        cmd_kwargs = {"proofpgs_exe": proofpgs_exe}
+    else:
+        python_exe = sys.executable
+        if not python_exe:
+            print(f"{error('[error]')} Could not determine Python executable path.",
+                  file=sys.stderr)
+            sys.exit(1)
+        cmd_kwargs = {"python_exe": python_exe, "project_dir": _project_root()}
+
     sup_exts = sorted(SUP_EXTENSIONS)
     container_exts = sorted(CONTAINER_EXTENSIONS)
 
@@ -148,7 +178,7 @@ def install():
                 winreg.SetValueEx(key, "MUIVerb", 0, winreg.REG_SZ, label)
 
             cmd_path = f"{verb_path}\\command"
-            command = _build_command(python_exe, project_dir, mode, use_pause)
+            command = _build_command(mode, use_pause, **cmd_kwargs)
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cmd_path) as key:
                 winreg.SetValue(key, "", winreg.REG_SZ, command)
 
@@ -180,8 +210,11 @@ def install():
     print()
     print(dim("Note: On Windows 11, right-click and choose 'Show more options' "
               "to see the submenu."))
-    print(dim(f"Python: {python_exe}"))
-    print(dim(f"Project: {project_dir}"))
+    if pip_installed:
+        print(dim(f"Command: {proofpgs_exe}"))
+    else:
+        print(dim(f"Python: {cmd_kwargs['python_exe']}"))
+        print(dim(f"Project: {cmd_kwargs['project_dir']}"))
 
 
 def uninstall():

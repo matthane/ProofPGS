@@ -8,17 +8,19 @@ Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which 
 
 ## Installation
 
-Download the latest release for your platform from the [Releases](https://github.com/matthane/ProofPGS/releases) page. Each release archive includes ProofPGS and a pre-built [libpgs](https://github.com/matthane/libpgs) binary — no separate download needed.
+### pip (recommended)
 
-### Requirements
+```
+pip install proofpgs
+```
 
-- Python 3.10+
-- [libpgs](https://github.com/matthane/libpgs) (bundled in release archives — only needed separately when running from source)
-- [NumPy](https://pypi.org/project/numpy/)
-- [Pillow](https://pypi.org/project/Pillow/)
-- [FFmpeg](https://ffmpeg.org/) (optional — only needed for the video stream dynamic range mismatch badge)
+This installs ProofPGS with all dependencies and a bundled [libpgs](https://github.com/matthane/libpgs) binary. The `proofpgs` command is available system-wide after installation.
 
-Install Python dependencies:
+Available for Windows x64, Linux x64, macOS x64, and macOS ARM64.
+
+### Release archive
+
+Alternatively, download a pre-built archive for your platform from the [Releases](https://github.com/matthane/ProofPGS/releases) page. Each archive includes ProofPGS and a pre-built libpgs binary. Install the Python dependencies manually:
 
 ```
 pip install numpy pillow
@@ -26,14 +28,18 @@ pip install numpy pillow
 
 ### Running from source
 
-If you prefer to run from a git clone instead of a release archive, you'll need to provide the [libpgs](https://github.com/matthane/libpgs) binary yourself. Place `libpgs` (or `libpgs.exe` on Windows) in `proofpgs/bin/`, or add it to your system PATH.
+If you prefer to run from a git clone, you'll need to provide the [libpgs](https://github.com/matthane/libpgs) binary yourself. Place `libpgs` (or `libpgs.exe` on Windows) in `proofpgs/bin/`, or add it to your system PATH. Then install dependencies with `pip install numpy pillow`.
+
+### Optional dependency
+
+- [FFmpeg](https://ffmpeg.org/) — only needed for the video stream dynamic range mismatch badge. If ffprobe is not on PATH, this feature is silently skipped.
 
 ## Quick Start
 
-Just point ProofPGS at any video file or `.sup` file and run it from the project root:
+Just point ProofPGS at any video file or `.sup` file:
 
 ```bash
-python -m proofpgs movie.mkv
+proofpgs movie.mkv
 ```
 
 That's it. ProofPGS will:
@@ -49,20 +55,20 @@ Works the same way with `.sup` and `.m2ts` files.
 ## Advanced Usage
 
 ```
-python -m proofpgs <input_file> [options]
+proofpgs <input_file> [options]
 ```
 
 ### Skip the prompts (non-interactive)
 
 ```bash
 # Specific tracks, first 20 subtitles:
-python -m proofpgs movie.mkv --tracks 0,2 --first 20
+proofpgs movie.mkv --tracks 0,2 --first 20
 
 # All tracks, all subtitles:
-python -m proofpgs movie.mkv --tracks all
+proofpgs movie.mkv --tracks all
 
 # Custom output directory:
-python -m proofpgs movie.mkv --out ./my_output
+proofpgs movie.mkv --out ./my_output
 ```
 
 ### Extract a specific time range
@@ -71,13 +77,13 @@ Use `--start` and `--end` to extract subtitles from a specific portion of the fi
 
 ```bash
 # Subtitles from 5 minutes onward:
-python -m proofpgs movie.mkv --start 0:05:00
+proofpgs movie.mkv --start 0:05:00
 
 # Subtitles between 1:30:00 and 1:35:00:
-python -m proofpgs movie.mkv --start 1:30:00 --end 1:35:00
+proofpgs movie.mkv --start 1:30:00 --end 1:35:00
 
 # First 10 subtitles within a time window:
-python -m proofpgs movie.mkv --start 0:05:00 --end 0:10:00 --first 10
+proofpgs movie.mkv --start 0:05:00 --end 0:10:00 --first 10
 ```
 
 Timestamps accept `HH:MM:SS.ms`, `MM:SS.ms`, `SS.ms`, or plain seconds (e.g. `300`). `--start` and `--end` can be used independently or together, and compose with `--first`.
@@ -95,22 +101,22 @@ ProofPGS has six output modes:
 
 ```bash
 # Auto-detect color space and decode accordingly (default):
-python -m proofpgs input.sup
+proofpgs input.sup
 
 # Force side-by-side comparison:
-python -m proofpgs input.sup --mode compare
+proofpgs input.sup --mode compare
 
 # Direct export — transparent HDR-decoded PNGs:
-python -m proofpgs input.sup --mode hdr
+proofpgs input.sup --mode hdr
 
 # Direct export — transparent SDR-decoded PNGs:
-python -m proofpgs input.sup --mode sdr
+proofpgs input.sup --mode sdr
 
 # Show track info and detection only (no output):
-python -m proofpgs movie.mkv --mode validate
+proofpgs movie.mkv --mode validate
 
 # Quick validation under 10s budget (prompts to re-analyze sparse tracks):
-python -m proofpgs movie.mkv --mode validate-fast
+proofpgs movie.mkv --mode validate-fast
 ```
 
 ## Options
@@ -135,13 +141,13 @@ ProofPGS can add a right-click context menu for all supported file types (`.sup`
 
 ```bash
 # Register context menu entries:
-python -m proofpgs --install
+proofpgs --install
 
 # Remove context menu entries:
-python -m proofpgs --uninstall
+proofpgs --uninstall
 ```
 
-The install command records the paths to both the Python interpreter and the project directory at install time. If you move the project or switch Python environments, run `--install` again to update the paths.
+When installed via pip, the context menu invokes the `proofpgs` command directly. When running from source or a release archive, the install command records the paths to both the Python interpreter and the project directory. If you move the project or switch Python environments, run `--install` again to update the paths.
 
 On Windows 11, right-click a supported file and choose **Show more options** to see the ProofPGS submenu.
 
