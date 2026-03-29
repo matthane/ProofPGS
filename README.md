@@ -186,15 +186,9 @@ BT.709 YCbCr (limited range)  ->  BT.709 gamma  ->  BT.1886 linearise  ->  sRGB 
 
 ## Performance
 
-**libpgs extraction:** All file I/O — both `.sup` files and containers (MKV, M2TS) — is handled by [libpgs](https://github.com/matthane/libpgs), a Rust CLI that streams PGS data as NDJSON over a subprocess pipe. For MKV files, libpgs uses the Cues index to seek directly to subtitle blocks, reading only a few MB out of tens of GB for large UHD remuxes. No temp files are created — display sets are streamed into memory as they are extracted.
+All file I/O is handled by [libpgs](https://github.com/matthane/libpgs), a high-performance Rust tool purpose-built for PGS segment extraction. libpgs streams decoded display sets over a subprocess pipe — no temp files, no intermediate formats. For MKV files with a Cues index, libpgs seeks directly to subtitle data, reading only a few MB out of tens of GB for large UHD remuxes.
 
-**Track listing (sub-10s):** When opening a container, ProofPGS analyzes all PGS tracks under a 10-second wallclock budget. libpgs streams display sets from all tracks in a single pass. Tracks that receive enough data get SDR/HDR detection. Sparse tracks (e.g. forced subtitles with very few entries) that can't be analyzed in time are flagged, and you can press `[v]` at the track selection prompt to re-analyze them without a time limit. A content-based watchdog also terminates extraction early once all tracks have conclusive detection, so analysis often finishes well under 10 seconds.
-
-**Streaming extraction:** When processing containers with a display-set limit (`--first` or the interactive default of 10), ProofPGS closes the libpgs pipe once enough display sets have been collected. Analysis data is reused when it already contains enough display sets, avoiding redundant extraction.
-
-**Single-pass multi-track extraction:** When multiple tracks are selected, all tracks are extracted in a single libpgs invocation — regardless of whether the container has MKV Cues. A reader thread demuxes the NDJSON stream into per-track queues consumed by concurrent renderers. For limited extractions (e.g. `--first 100`), the reader enforces per-track limits and terminates the subprocess once all tracks are satisfied. This avoids redundant MKV header / cues parsing that would otherwise cause pauses between tracks, especially on network storage.
-
-**Multi-threaded rendering:** PNG rendering uses multiple threads by default (auto-detected, up to 8). Override with `--threads`.
+PNG rendering uses multiple threads by default (up to 8, override with `--threads`).
 
 ## Project Structure
 
