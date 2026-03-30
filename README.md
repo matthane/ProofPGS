@@ -132,12 +132,12 @@ proofpgs movie.mkv --mode validate-fast
 | `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
 | `--threads` | integer | auto (up to 8) | Number of parallel rendering threads. |
-| `--install` | flag | — | Register Windows Explorer context menu entries for all supported file types. |
-| `--uninstall` | flag | — | Remove Windows Explorer context menu entries. |
+| `--install` | flag | — | Register file manager context menu entries for all supported file types. |
+| `--uninstall` | flag | — | Remove file manager context menu entries. |
 
-## Windows Explorer Integration
+## File Manager Integration
 
-ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.mk3d`, `.m2ts`). The menu shows a **ProofPGS** submenu with entries for each output mode.
+ProofPGS can add a right-click context menu for all supported file types (`.sup`, `.mkv`, `.mk3d`, `.m2ts`). The menu shows entries for each output mode, filtered by file type.
 
 ```bash
 # Register context menu entries:
@@ -149,7 +149,11 @@ proofpgs --uninstall
 
 When installed via pip, the context menu invokes the `proofpgs` command directly. When running from source or a release archive, the install command records the paths to both the Python interpreter and the project directory. If you move the project or switch Python environments, run `--install` again to update the paths.
 
-On Windows 11, right-click a supported file and choose **Show more options** to see the ProofPGS submenu.
+| Platform | Mechanism | Notes |
+|---|---|---|
+| **Windows** | Explorer context menu via registry (`HKCU`) | On Windows 11, right-click and choose **Show more options** to see the submenu. |
+| **Linux** | Freedesktop `.desktop` files in `~/.local/share/applications/` | Entries appear in the **Open With** menu. A custom MIME type is registered for `.sup` files. |
+| **macOS** | Finder Quick Actions via Automator `.workflow` bundles in `~/Library/Services/` | You may need to enable the actions in **System Settings > Privacy & Security > Extensions > Finder**. |
 
 ## Output
 
@@ -216,7 +220,7 @@ proofpgs/
   ffmpeg.py           # ffprobe video range detection
   interactive.py      # Interactive track and count selection
   pipeline.py         # High-level orchestration
-  shellmenu.py        # Windows Explorer context menu integration
+  shellmenu.py        # File manager context menu integration (Windows, Linux, macOS)
   style.py            # Terminal styling and color output
 LICENSES/
   OFL.txt             # SIL Open Font License 1.1 (Sora font)

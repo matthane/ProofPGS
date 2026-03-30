@@ -35,10 +35,10 @@ def _main():
                         help="Path to a .sup file or video container "
                              "(MKV, M2TS)")
     parser.add_argument("--install", action="store_true",
-                        help="Register Windows Explorer context menu entries "
+                        help="Register file manager context menu entries "
                              "for all supported file types")
     parser.add_argument("--uninstall", action="store_true",
-                        help="Remove Windows Explorer context menu entries")
+                        help="Remove file manager context menu entries")
     parser.add_argument("--mode", choices=["auto", "compare", "hdr", "sdr",
                                           "validate", "validate-fast"],
                         default="auto",
