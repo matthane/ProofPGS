@@ -80,7 +80,9 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
 
         rgba    = lut[indices]                          # (h, w, 4) uint8
         obj_img = Image.fromarray(rgba, mode="RGBA")
-        canvas.paste(obj_img, (x_pos, y_pos), mask=obj_img)
+        temp = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        temp.paste(obj_img, (x_pos, y_pos))
+        canvas = Image.alpha_composite(canvas, temp)
 
     return canvas, pts_ms
 
