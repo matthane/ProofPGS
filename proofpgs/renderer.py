@@ -85,22 +85,74 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
     return canvas, pts_ms
 
 
-def crop_to_content(img: Image.Image, pad: int = 8) -> Image.Image:
-    """Crop a full-frame RGBA image down to its non-transparent content."""
-    arr = np.array(img)
-    alpha = arr[:, :, 3]
-    rows  = np.any(alpha > 0, axis=1)
-    cols  = np.any(alpha > 0, axis=0)
+def _filter_thin_runs(mask: np.ndarray, min_thickness: int) -> np.ndarray:
+    """Zero out contiguous True runs shorter than *min_thickness*.
+
+    Used to ignore thin artifact strips (e.g. 1–2 px palette ramps baked
+    into full-frame PGS bitmaps by some authoring tools) that would
+    otherwise inflate the crop bounding box.
+    """
+    if min_thickness <= 1:
+        return mask
+    filtered = mask.copy()
+    n = len(filtered)
+    i = 0
+    while i < n:
+        if filtered[i]:
+            j = i
+            while j < n and filtered[j]:
+                j += 1
+            if j - i < min_thickness:
+                filtered[i:j] = False
+            i = j
+        else:
+            i += 1
+    return filtered
+
+
+_CROP_MIN_THICKNESS = 3
+
+
+def _content_bbox(alpha: np.ndarray, pad: int = 8):
+    """Return (cmin, rmin, cmax, rmax) content box, or None if empty.
+
+    Thin artifact strips (< ``_CROP_MIN_THICKNESS`` px) are excluded
+    from the bounding-box calculation.  Rows are filtered first, then
+    columns are recomputed from surviving rows only (and vice versa)
+    so that a thin horizontal strip doesn't inflate the column span.
+    """
+    rows = _filter_thin_runs(np.any(alpha > 0, axis=1), _CROP_MIN_THICKNESS)
     if not rows.any():
-        return img
+        return None
+    # Recompute columns using only the surviving rows.
+    cols = _filter_thin_runs(
+        np.any(alpha[rows, :] > 0, axis=0), _CROP_MIN_THICKNESS)
+    if not cols.any():
+        return None
+    # Recompute rows using only surviving columns, in case thin
+    # vertical artifacts inflated the row span.
+    rows = _filter_thin_runs(
+        np.any(alpha[:, cols] > 0, axis=1), _CROP_MIN_THICKNESS)
+    if not rows.any():
+        return None
     rmin, rmax = np.where(rows)[0][[0, -1]]
     cmin, cmax = np.where(cols)[0][[0, -1]]
-    return img.crop((
+    h, w = alpha.shape
+    return (
         max(0, cmin - pad),
         max(0, rmin - pad),
-        min(img.width,  cmax + 1 + pad),
-        min(img.height, rmax + 1 + pad),
-    ))
+        min(w, cmax + 1 + pad),
+        min(h, rmax + 1 + pad),
+    )
+
+
+def crop_to_content(img: Image.Image, pad: int = 8) -> Image.Image:
+    """Crop a full-frame RGBA image down to its non-transparent content."""
+    alpha = np.array(img)[:, :, 3]
+    box = _content_bbox(alpha, pad)
+    if box is None:
+        return img
+    return img.crop(box)
 
 
 def _render_check_icon(r, color):
@@ -245,19 +297,9 @@ def _render_and_save_compare(ds, i, out_dir, nocrop, res):
 
     if not nocrop:
         ref_img = img_hdr or img_sdr
-        arr = np.array(ref_img)
-        alpha = arr[:, :, 3]
-        rows = np.any(alpha > 0, axis=1)
-        cols = np.any(alpha > 0, axis=0)
-        if rows.any():
-            pad = 8
-            rmin, rmax = np.where(rows)[0][[0, -1]]
-            cmin, cmax = np.where(cols)[0][[0, -1]]
-            box = (
-                max(0, cmin - pad), max(0, rmin - pad),
-                min(ref_img.width,  cmax + 1 + pad),
-                min(ref_img.height, rmax + 1 + pad),
-            )
+        alpha = np.array(ref_img)[:, :, 3]
+        box = _content_bbox(alpha, pad=8)
+        if box is not None:
             if img_sdr: img_sdr = img_sdr.crop(box)
             if img_hdr: img_hdr = img_hdr.crop(box)
 
