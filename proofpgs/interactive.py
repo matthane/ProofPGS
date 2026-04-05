@@ -67,16 +67,18 @@ def confirm_validate_bailed() -> bool:
     return choice == "v"
 
 
-def select_count_interactive() -> int | None | str:
+def select_count_interactive(has_cues: bool = False) -> int | None | str:
     """Prompt the user for how many subtitles to process per track.
 
     Returns ``"cached"`` (use analysis cache only), a positive int, or
-    ``None`` (process the entire file).
+    ``None`` (process all subtitles in the selected tracks).
     """
+    all_label = "All" if has_cues else "All (reads entire file)"
+    cached_label = "1 (cached)" if has_cues else f"Up to {DEFAULT_INTERACTIVE_COUNT} (cached)"
     print("How many subtitles to process per track?")
-    print(f"  {bold('[Enter]')}    Up to {DEFAULT_INTERACTIVE_COUNT} (cached)")
+    print(f"  {bold('[Enter]')}    {cached_label}")
     print(f"  {bold('[number]')}   Custom count")
-    print(f"  {bold('[a]')}        All (reads entire file)")
+    print(f"  {bold('[a]')}        {all_label}")
     try:
         choice = input("> ").strip().lower()
     except EOFError:

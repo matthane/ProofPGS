@@ -750,7 +750,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
     if first is not None:
         max_ds = first
     elif sys.stdin.isatty():
-        max_ds = select_count_interactive()
+        max_ds = select_count_interactive(has_cues=has_cues)
     else:
         max_ds = None  # process all — backward-compatible default
 
