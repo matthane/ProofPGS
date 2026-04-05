@@ -62,7 +62,7 @@ proofpgs <input_file> [options]
 
 ```bash
 # Specific tracks, first 20 subtitles:
-proofpgs movie.mkv --tracks 0,2 --first 20
+proofpgs movie.mkv --tracks 1,3 --first 20
 
 # All tracks, all subtitles:
 proofpgs movie.mkv --tracks all
@@ -129,7 +129,7 @@ proofpgs movie.mkv --mode validate-fast
 | `--first` | integer | all | Decode only the first N subtitle display sets. |
 | `--start` | timestamp | beginning | Start timestamp for extraction (e.g. `0:05:00`, `5:00`, `300`). Seeks directly to the target offset. |
 | `--end` | timestamp | end of file | End timestamp for extraction (e.g. `0:10:00`, `10:00`, `600`). |
-| `--tracks` | e.g. `0,2,3` or `all` | interactive | Which PGS tracks to process (container input only). |
+| `--tracks` | e.g. `1,3,4` or `all` | interactive | Which PGS tracks to process (1-based, container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
 | `--threads` | integer | auto (up to 8) | Number of parallel rendering threads. |
 | `--install` | flag | — | Register file manager context menu entries for all supported file types. |
@@ -161,11 +161,11 @@ Each subtitle is saved as a PNG file named with its display set index, timestamp
 
 ```
 movie_pgs_output/
-  track_0_eng/
+  track_1_eng/
     ds_0000_12500ms_sdr.png
     ds_0001_15200ms_sdr.png
     ...
-  track_1_ger_forced/
+  track_2_ger_forced/
     ds_0000_8300ms_hdr.png
     ...
 ```

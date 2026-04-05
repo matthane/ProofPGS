@@ -21,7 +21,7 @@ def select_tracks_interactive(tracks: list,
 
     print("Which tracks do you want to process?")
     print(f"  {bold('[Enter]')}    {default_label}")
-    print(f"  {bold('[numbers]')}  Specific tracks, e.g. 0,2,3")
+    print(f"  {bold('[numbers]')}  Specific tracks, e.g. 1,3,4")
     if has_bailed:
         print(f"  {bold('[v]')}        Validate unanalyzed tracks first (may take longer)")
     try:
@@ -40,7 +40,8 @@ def select_tracks_interactive(tracks: list,
         return "validate"
 
     try:
-        indices = [int(x.strip()) for x in choice.split(",")]
+        # User input is 1-based; convert to 0-based internal indices.
+        indices = [int(x.strip()) - 1 for x in choice.split(",")]
         valid = [i for i in indices if 0 <= i < len(tracks)]
         if not valid:
             print(dim(f"  No valid track numbers entered. Processing {default_label.lower()}."))

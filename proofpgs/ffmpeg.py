@@ -94,8 +94,12 @@ def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
 
 
 def build_track_folder_name(pgs_index: int, track_info: dict) -> str:
-    """Build a subfolder name like 'track_0_ger' or 'track_2_eng_forced'."""
-    parts = [f"track_{pgs_index}", track_info["language"]]
+    """Build a subfolder name like 'track_1_ger' or 'track_3_eng_forced'.
+
+    *pgs_index* is the internal 0-based index; the folder name uses the
+    1-based display number to match the track listing.
+    """
+    parts = [f"track_{pgs_index + 1}", track_info["language"]]
     if track_info["forced"]:
         parts.append("forced")
     if track_info["default"]:
