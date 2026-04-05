@@ -11,7 +11,11 @@ import sys
 from pathlib import Path
 
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS
-from .style import dim, error, success
+from .style import (
+    dim,
+    box_top, box_bottom, box_row, box_blank,
+    status_ok, status_err,
+)
 
 _MENU_NAME = "ProofPGS"
 _SUBMENU_SUP = "ProofPGS.SupMenu"
@@ -72,6 +76,31 @@ def _is_pip_installed() -> bool:
         return False
 
 
+def _print_install_box(title: str, sup_exts, container_exts,
+                       post_lines=()) -> None:
+    """Render a framed summary of what was just installed.
+
+    The framed portion lists registered extensions and the installed
+    modes.  *post_lines* are reference lines (paths, platform notes)
+    printed *below* the box — where long file paths can run to their
+    natural length without being clipped by the box width.
+    """
+    print(box_top(title))
+    print(box_row(f" Registered for {len(sup_exts) + len(container_exts)} "
+                  f"file types: {dim(' '.join(sorted(sup_exts + container_exts)))}"))
+    print(box_blank())
+    print(box_row(f" Subtitle files ({' '.join(sup_exts)}):"))
+    for _, label, _, _ in _SUP_MODES:
+        print(box_row(f"   {dim('-')} {label}"))
+    print(box_blank())
+    print(box_row(f" Container files ({' '.join(container_exts)}):"))
+    for _, label, _, _ in _CONTAINER_MODES:
+        print(box_row(f"   {dim('-')} {label}"))
+    print(box_bottom())
+    for line in post_lines:
+        print(f"  {dim(line)}")
+
+
 def _project_root() -> str:
     """Return the project root directory (parent of the proofpgs package)."""
     import os
@@ -87,14 +116,16 @@ def _resolve_install_paths() -> dict:
     if _is_pip_installed():
         exe = shutil.which("proofpgs")
         if not exe:
-            print(f"{error('[error]')} proofpgs is pip-installed but the "
-                  f"'proofpgs' command was not found on PATH.", file=sys.stderr)
+            print(status_err(
+                "proofpgs is pip-installed but the 'proofpgs' command "
+                "was not found on PATH."
+            ), file=sys.stderr)
             sys.exit(1)
         return {"proofpgs_exe": exe}
 
     python_exe = sys.executable
     if not python_exe:
-        print(f"{error('[error]')} Could not determine Python executable path.",
+        print(status_err("Could not determine Python executable path."),
               file=sys.stderr)
         sys.exit(1)
     return {"python_exe": python_exe, "project_dir": _project_root()}
@@ -113,8 +144,10 @@ def install():
     elif sys.platform == "darwin":
         _install_macos()
     else:
-        print(f"{error('[error]')} Context menu integration is not supported "
-              f"on this platform ({sys.platform}).", file=sys.stderr)
+        print(status_err(
+            f"Context menu integration is not supported on this "
+            f"platform ({sys.platform})."
+        ), file=sys.stderr)
         sys.exit(1)
 
 
@@ -127,8 +160,10 @@ def uninstall():
     elif sys.platform == "darwin":
         _uninstall_macos()
     else:
-        print(f"{error('[error]')} Context menu integration is not supported "
-              f"on this platform ({sys.platform}).", file=sys.stderr)
+        print(status_err(
+            f"Context menu integration is not supported on this "
+            f"platform ({sys.platform})."
+        ), file=sys.stderr)
         sys.exit(1)
 
 
@@ -255,26 +290,18 @@ def _install_windows():
 
     _notify_shell_windows()
 
-    all_exts = " ".join(sorted(sup_exts + container_exts))
     pip_installed = "proofpgs_exe" in cmd_kwargs
-    print(f"{success('Registered')} context menu for "
-          f"{len(sup_exts) + len(container_exts)} file types:")
-    print(f"  {all_exts}")
-    print()
-    print(f"Subtitle files ({' '.join(sup_exts)}):")
-    for _, label, _, _ in _SUP_MODES:
-        print(f"  - {label}")
-    print(f"Container files ({' '.join(container_exts)}):")
-    for _, label, _, _ in _CONTAINER_MODES:
-        print(f"  - {label}")
-    print()
-    print(dim("Note: On Windows 11, right-click and choose 'Show more options' "
-              "to see the submenu."))
+    trailing = [
+        "Windows 11: right-click and choose 'Show more options' "
+        "to see the submenu.",
+    ]
     if pip_installed:
-        print(dim(f"Command: {cmd_kwargs['proofpgs_exe']}"))
+        trailing.append(f"Command: {cmd_kwargs['proofpgs_exe']}")
     else:
-        print(dim(f"Python: {cmd_kwargs['python_exe']}"))
-        print(dim(f"Project: {cmd_kwargs['project_dir']}"))
+        trailing.append(f"Python:  {cmd_kwargs['python_exe']}")
+        trailing.append(f"Project: {cmd_kwargs['project_dir']}")
+    _print_install_box("Context Menu Installed", sup_exts, container_exts,
+                       post_lines=trailing)
 
 
 def _uninstall_windows():
@@ -308,7 +335,9 @@ def _uninstall_windows():
     _notify_shell_windows()
 
     if removed:
-        print(f"{success('Removed')} Windows Explorer context menu entries for ProofPGS.")
+        print(status_ok(
+            f"Removed {removed} Windows Explorer context menu entries."
+        ))
     else:
         print("No ProofPGS context menu entries found.")
 
@@ -410,25 +439,15 @@ def _install_linux():
 
     sup_exts = sorted(SUP_EXTENSIONS)
     container_exts = sorted(CONTAINER_EXTENSIONS)
-    all_exts = " ".join(sorted(sup_exts + container_exts))
     pip_installed = "proofpgs_exe" in paths
-    print(f"{success('Registered')} context menu for "
-          f"{len(sup_exts) + len(container_exts)} file types:")
-    print(f"  {all_exts}")
-    print()
-    print(f"Subtitle files ({' '.join(sup_exts)}):")
-    for _, label, _, _ in _SUP_MODES:
-        print(f"  - {label}")
-    print(f"Container files ({' '.join(container_exts)}):")
-    for _, label, _, _ in _CONTAINER_MODES:
-        print(f"  - {label}")
-    print()
-    print(dim(f"Installed {len(written)} .desktop files to {desktop_d}"))
+    trailing = [f"Installed {len(written)} .desktop files to {desktop_d}"]
     if pip_installed:
-        print(dim(f"Command: {paths['proofpgs_exe']}"))
+        trailing.append(f"Command: {paths['proofpgs_exe']}")
     else:
-        print(dim(f"Python: {paths['python_exe']}"))
-        print(dim(f"Project: {paths['project_dir']}"))
+        trailing.append(f"Python:  {paths['python_exe']}")
+        trailing.append(f"Project: {paths['project_dir']}")
+    _print_install_box("Context Menu Installed", sup_exts, container_exts,
+                       post_lines=trailing)
 
 
 def _uninstall_linux():
@@ -452,7 +471,7 @@ def _uninstall_linux():
         _run_quiet(["update-desktop-database", str(desktop_d)])
 
     if removed:
-        print(f"{success('Removed')} {removed} .desktop file(s) from {desktop_d}.")
+        print(status_ok(f"Removed {removed} .desktop file(s) from {desktop_d}."))
     else:
         print("No ProofPGS context menu entries found.")
 
@@ -700,27 +719,19 @@ def _install_macos():
     # Refresh the Services menu
     _run_quiet(["/System/Library/CoreServices/pbs", "-update"])
 
-    all_exts = " ".join(sorted(sup_exts + container_exts))
     pip_installed = "proofpgs_exe" in paths
-    print(f"{success('Registered')} Quick Actions for "
-          f"{len(sup_exts) + len(container_exts)} file types:")
-    print(f"  {all_exts}")
-    print()
-    print(f"Subtitle files ({' '.join(sup_exts)}):")
-    for _, label, _, _ in _SUP_MODES:
-        print(f"  - {label}")
-    print(f"Container files ({' '.join(container_exts)}):")
-    for _, label, _, _ in _CONTAINER_MODES:
-        print(f"  - {label}")
-    print()
-    print(dim(f"Installed {len(written)} Quick Actions to {services_d}"))
-    print(dim("Note: You may need to enable these in System Settings > "
-              "Privacy & Security > Extensions > Finder."))
+    trailing = [
+        f"Installed {len(written)} Quick Actions to {services_d}",
+        "Enable in System Settings > Privacy & Security > "
+        "Extensions > Finder if needed.",
+    ]
     if pip_installed:
-        print(dim(f"Command: {paths['proofpgs_exe']}"))
+        trailing.append(f"Command: {paths['proofpgs_exe']}")
     else:
-        print(dim(f"Python: {paths['python_exe']}"))
-        print(dim(f"Project: {paths['project_dir']}"))
+        trailing.append(f"Python:  {paths['python_exe']}")
+        trailing.append(f"Project: {paths['project_dir']}")
+    _print_install_box("Quick Actions Installed", sup_exts, container_exts,
+                       post_lines=trailing)
 
 
 def _uninstall_macos():
@@ -736,6 +747,6 @@ def _uninstall_macos():
     _run_quiet(["/System/Library/CoreServices/pbs", "-update"])
 
     if removed:
-        print(f"{success('Removed')} {removed} Quick Action(s) from {services_d}.")
+        print(status_ok(f"Removed {removed} Quick Action(s) from {services_d}."))
     else:
         print("No ProofPGS Quick Actions found.")

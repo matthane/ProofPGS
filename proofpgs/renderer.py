@@ -75,7 +75,7 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
         try:
             indices = np.frombuffer(obj["bitmap"], dtype=np.uint8).reshape(h, w)
         except Exception as e:
-            print(f"  {warn('[warn]')} Bitmap decode error obj {obj_id}: {e}")
+            print(f"  {warn(f'Bitmap decode error obj {obj_id}: {e}')}")
             continue
 
         rgba    = lut[indices]                          # (h, w, 4) uint8

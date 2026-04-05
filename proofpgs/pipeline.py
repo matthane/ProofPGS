@@ -19,8 +19,10 @@ from .interactive import (
 from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
                         DEFAULT_INTERACTIVE_COUNT)
 from .style import (
-    info, warn, error, success, heading, dim, bold,
+    warn, error, dim, bold,
     badge_hdr, badge_sdr, badge_unknown, badge_mismatch,
+    box_top, box_bottom, box_row, box_blank, box_sep, status_ok,
+    glyph,
     CURSOR_UP_CLEAR,
 )
 
@@ -33,15 +35,21 @@ def _resolve_auto_mode(detection: dict) -> str:
     return "compare"
 
 
+def _fmt_mode(mode: str) -> str:
+    """Format a mode name for display: HDR/SDR stay uppercase (acronyms),
+    other modes are capitalized (``compare`` → ``Compare``)."""
+    return mode.upper() if mode in ("hdr", "sdr") else mode.capitalize()
+
+
 def _build_track_tags(tracks, selected_indices):
     """Build short per-line tags for each selected track.
 
-    Format is ``index:lang`` (e.g. ``0:de``, ``2:en``), matching the
+    Format is ``index:lang`` (e.g. ``1:de``, ``3:en``), matching the
     ``[index]`` shown in the track listing so the user can cross-reference.
     """
     tags = {}
     for ti in selected_indices:
-        tags[ti] = f"{ti}:{tracks[ti]['language']}"
+        tags[ti] = f"{ti + 1}:{tracks[ti]['language']}"
     return tags
 
 
@@ -81,8 +89,11 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
     _timer_t0 = time.monotonic()
     _is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
+    _basename = os.path.basename(input_path)
+
     def _print_timer_label(num_validated=0):
-        label = f"  {info('Analyzing')} {num_tracks} PGS track(s)..."
+        label = (f"{bold('Analyzing')} {num_tracks} PGS track(s) in "
+                 f"{_basename}...")
         if num_validated > 0:
             label += f" {dim(f'({num_validated}/{num_tracks} validated)')}"
         return label
@@ -95,12 +106,14 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 e = time.monotonic() - _timer_t0
                 print(f"\r{_timer_label[0]} {dim(f'{e:.0f}s')}", end="", flush=True)
 
-    if has_cues:
-        print(f"  {dim('Subtitle cues available. Using direct extraction.')}")
-    elif budget:
-        print(f"  {dim(f'Subtitle cues not available. Using sequential extraction with {budget.limit:.0f}s timeout.')}")
-    else:
-        print(f"  {dim('Subtitle cues not available. Using sequential extraction.')}")
+    print()
+    # Only announce the fallback path — the cues-available happy path is
+    # silent so the track listing dominates the output.
+    if not has_cues:
+        if budget:
+            print(f"  {dim(f'No subtitle cues; sequential scan ({budget.limit:.0f}s budget).')}")
+        else:
+            print(f"  {dim('No subtitle cues; sequential scan.')}")
     _timer_thread = threading.Thread(target=_tick, daemon=True)
     print(_timer_label[0], end="", flush=True)
     _timer_thread.start()
@@ -243,99 +256,86 @@ def _print_track_listing(tracks, video_range=None):
     Returns True if any tracks were bailed (not analyzed).
     """
     has_bailed = False
+    title = f"{len(tracks)} PGS Subtitle Track(s)"
 
-    # --- Pass 1: build plain-text columns for width calculation ---
-    rows = []  # (index_col, stream_col, detail_col, count_plain,
-               #  badge_plain, badge_styled, mismatch_styled)
+    # Determine index-column width so `[1]` / `[10]` stay aligned.
+    idx_w = max(len(f"[{ti}]") for ti in range(1, len(tracks) + 1))
+
+    lines = ["", box_top(title)]
+
+    # Video stream header row (if known) + a blank row of breathing space.
+    if video_range is not None:
+        if video_range == "hdr":
+            range_styled = badge_hdr(f"{glyph('hdr')} HDR")
+        else:
+            range_styled = badge_sdr(f"{glyph('sdr')} SDR")
+        lines.append(box_row(f" {dim('Video stream:')} {range_styled}"))
+        lines.append(box_blank())
 
     for ti, t in enumerate(tracks):
-        index_col = f"[{ti}]"
-        stream_col = f"stream {t['index']}"
+        # --- Identity row: [i]  Language • "Title" [flags] • ~N subs ---
+        idx = bold(f"[{ti + 1}]".ljust(idx_w))
 
-        parts = [t["language"]]
+        detail_parts = [t["language"]]
         if t["title"]:
-            parts.append(f'"{t["title"]}"')
+            detail_parts.append(f'"{t["title"]}"')
         flags = []
-        if t["forced"]:  flags.append("forced")
-        if t["default"]: flags.append("default")
+        if t["forced"]:
+            flags.append("forced")
+        if t["default"]:
+            flags.append("default")
         if flags:
-            parts.append(f"[{', '.join(flags)}]")
-        detail_col = "  ".join(parts)
+            detail_parts.append(f"[{', '.join(flags)}]")
 
-        # Approximate subtitle count from display-set metadata.
-        # Each visible subtitle typically produces 2 display sets
-        # (one to show, one to clear), so num_frames / 2 ≈ subtitle count.
         num_frames = t.get("num_frames")
         if num_frames and num_frames > 0:
             approx_subs = max(1, num_frames // 2)
-            count_plain = f"~{approx_subs:,} subs"
-        else:
-            count_plain = ""
+            detail_parts.append(dim(f"~{approx_subs:,} subs"))
 
+        sep = f"  {dim(glyph('dot'))}  "
+        detail = sep.join(detail_parts)
+        identity = f" {idx}  {detail}"
+        lines.append(box_row(identity))
+
+        # --- Attributes row: Mastered for <range>   Dynamic range mismatch ---
+        det = t.get("detection", {})
         if t.get("analysis_bailed"):
             has_bailed = True
-            badge_plain = "[not analyzed — too few samples] *"
-            badge_styled = badge_unknown(badge_plain)
+            badge_styled = badge_unknown("not analyzed *")
+        elif det.get("verdict") == "hdr":
+            badge_styled = badge_hdr(f"{glyph('hdr')} HDR")
+        elif det.get("verdict") == "sdr":
+            badge_styled = badge_sdr(f"{glyph('sdr')} SDR")
+        elif det.get("verdict"):
+            badge_styled = det["verdict"].upper()
         else:
-            det = t.get("detection", {})
-            if det.get("verdict") == "hdr":
-                badge_plain = "Mastered for HDR"
-                badge_styled = badge_hdr(badge_plain)
-            elif det.get("verdict") == "sdr":
-                badge_plain = "Mastered for SDR"
-                badge_styled = badge_sdr(badge_plain)
-            elif det.get("verdict"):
-                badge_plain = f"Mastered for {det['verdict'].upper()}"
-                badge_styled = badge_plain
-            else:
-                badge_plain = ""
-                badge_styled = ""
+            badge_styled = badge_unknown("unknown")
 
-        # Mismatch badge: subtitle range differs from video stream range.
         mismatch_styled = ""
-        det = t.get("detection", {})
         if (video_range is not None
                 and not t.get("analysis_bailed")
                 and det.get("verdict") is not None
                 and det["verdict"] != video_range):
-            mismatch_styled = f"  {badge_mismatch('Dynamic range mismatch')}"
+            mismatch_styled = badge_mismatch(
+                f"{glyph('warn')} Dynamic range mismatch"
+            )
 
-        rows.append((index_col, stream_col, detail_col, count_plain,
-                     badge_plain, badge_styled, mismatch_styled))
+        attr_bits = [badge_styled]
+        if mismatch_styled:
+            attr_bits.append(mismatch_styled)
+        # Indent attributes to align under the detail column: 1 leading
+        # space + idx_w + two-space gap.
+        attr_indent = " " + (" " * idx_w) + "  "
+        attr_line = attr_indent + "   ".join(attr_bits)
+        lines.append(box_row(attr_line))
 
-    # --- Compute column widths ---
-    idx_w    = max((len(r[0]) for r in rows), default=0)
-    stream_w = max((len(r[1]) for r in rows), default=0)
-    detail_w = max((len(r[2]) for r in rows), default=0)
-    count_w  = max((len(r[3]) for r in rows), default=0)
+        if ti < len(tracks) - 1:
+            lines.append(box_sep())
 
-    # --- Pass 2: print aligned ---
-    print(f"{info('Found')} {bold(str(len(tracks)))} PGS subtitle track(s):")
-    if video_range is not None:
-        range_label = video_range.upper()
-        range_styled = badge_hdr(range_label) if video_range == "hdr" else badge_sdr(range_label)
-        print(f"  {dim('Video stream:')} {range_styled}")
-    for (index_col, stream_col, detail_col, count_plain,
-         badge_plain, badge_styled, mismatch_styled) in rows:
-        idx_part = bold(index_col.ljust(idx_w))
-        stream_part = dim(stream_col.ljust(stream_w))
-        has_trailing = badge_plain or count_plain
-        if has_trailing:
-            detail_part = detail_col.ljust(detail_w)
-            if count_w:
-                if count_plain:
-                    count_part = f"  {dim(count_plain.rjust(count_w))}"
-                else:
-                    count_part = f"  {' ' * count_w}"
-            else:
-                count_part = ""
-            if badge_plain:
-                badge_part = f"  {badge_styled}"
-            else:
-                badge_part = ""
-            print(f"  {idx_part}  {stream_part}  {detail_part}{count_part}{badge_part}{mismatch_styled}")
-        else:
-            print(f"  {idx_part}  {stream_part}  {detail_col}")
+    lines.append(box_bottom())
+
+    for line in lines:
+        print(line)
 
     if has_bailed:
         print()
@@ -371,7 +371,7 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
             libpgs_path, input_path, track_ids,
             start=start, end=end)
     except Exception as e:
-        print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+        print(f"  {error(f'Multi-track extraction failed: {e}')}")
         return 0
 
     results = {}  # ti -> saved count
@@ -474,7 +474,7 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
                         libpgs_path, input_path, track_ids, max_ds=max_ds,
                         start=start, end=end)
             except Exception as e:
-                print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+                print(f"  {error(f'Multi-track extraction failed: {e}')}")
                 return 0
         else:
             try:
@@ -482,7 +482,7 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
                     libpgs_path, input_path, track_ids, max_ds=max_ds,
                     start=start, end=end)
             except Exception as e:
-                print(f"  {error('[error]')} Multi-track extraction failed: {e}")
+                print(f"  {error(f'Multi-track extraction failed: {e}')}")
                 return 0
 
         for ti in stream_indices:
@@ -577,7 +577,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     display_sets = list(stream_file(libpgs_path, sup_path,
                                     start=start, end=end))
     total = sum(1 for ds in display_sets if ds_has_content(ds))
-    print(f"  {info('Found')} {bold(str(total))} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
+    print(f"  {bold('Found')} {total} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
     # Color space detection
     detection = detect_from_palettes(display_sets)
@@ -587,7 +587,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     elif v == "sdr":
         print(f"  {badge_sdr('Mastered for SDR')}")
     else:
-        print(f"  {info('Detected:')} {format_detection(detection)}")
+        print(f"  {bold('Detected:')} {format_detection(detection)}")
 
     if mode in ("validate", "validate-fast"):
         return 0
@@ -599,14 +599,17 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
 
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
-        print(f"  {info('Mode:')} {bold(mode.upper())} {dim('(auto-detected)')}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
+        print(f"  {bold('Mode:')} {_fmt_mode(mode)} {dim('(auto-detected)')}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
     else:
         if (detection["verdict"] is not None
                 and detection["verdict"] != mode
                 and mode in ("hdr", "sdr")):
-            print(f"  {warn('WARNING:')} --mode {mode} specified but {detection['verdict'].upper()} "
-                  f"content detected. Subtitles may appear incorrect.")
-        print(f"  {info('Mode:')} {bold(mode.upper())}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
+            det_label = detection["verdict"].upper()
+            print("  " + warn(
+                f"Warning: --mode {mode} specified but {det_label} "
+                f"content detected. Subtitles may appear incorrect."
+            ))
+        print(f"  {bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
@@ -629,7 +632,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
     the libpgs pipe is closed early once enough display sets are collected.
     """
     # === Phase 1: Discover tracks via libpgs ===
-    print(f"{info('Probing:')} {input_path}")
     # When a time range is active, the discovery process (starting at
     # byte 0) can't be reused for targeted extraction — disable keep_alive.
     _keep_alive = start is None
@@ -716,12 +718,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
             selected_indices = list(range(len(tracks)))
         else:
             try:
-                selected_indices = [int(x.strip()) for x in tracks_arg.split(",")]
+                # User input is 1-based; convert to 0-based internal indices.
+                selected_indices = [int(x.strip()) - 1 for x in tracks_arg.split(",")]
                 selected_indices = [i for i in selected_indices if 0 <= i < len(tracks)]
             except ValueError:
                 selected_indices = list(range(len(tracks)))
             if not selected_indices:
-                print(f"  {warn('No valid track numbers.')} Processing all tracks.")
+                print(f"  {warn('No valid track numbers. Processing all tracks.')}")
                 selected_indices = list(range(len(tracks)))
     elif sys.stdin.isatty():
         if len(tracks) == 1 and not any(t.get("analysis_bailed") for t in tracks):
@@ -770,36 +773,41 @@ def process_container(input_path: str, out_dir: str, mode: str,
 
         unique = set(track_modes.values())
         if len(unique) == 1:
-            mode_note = f"{next(iter(unique)).upper()} (auto-detected)"
+            mode_note = f"{_fmt_mode(next(iter(unique)))} (auto-detected)"
         else:
             per = ", ".join(
-                f"track {ti}: {track_modes[ti].upper()}"
+                f"track {ti + 1}: {_fmt_mode(track_modes[ti])}"
                 for ti in selected_indices
             )
-            mode_note = f"AUTO (per-track: {per})"
+            mode_note = f"Auto (per-track: {per})"
     elif mode in ("hdr", "sdr"):
         track_modes = {ti: mode for ti in selected_indices}
-        mode_note = mode.upper()
+        mode_note = _fmt_mode(mode)
         for ti in selected_indices:
             det = tracks[ti].get("detection", {})
             if det.get("verdict") and det["verdict"] != mode:
-                print(f"  {warn('WARNING:')} --mode {mode} specified but track {ti} "
-                      f"detected as {det['verdict'].upper()}. "
-                      f"Subtitles may appear incorrect.")
+                det_label = _fmt_mode(det["verdict"])
+                print("  " + warn(
+                    f"Warning: --mode {mode} specified but track {ti + 1} "
+                    f"detected as {det_label}. Subtitles may appear incorrect."
+                ))
     else:
         track_modes = {ti: mode for ti in selected_indices}
-        mode_note = mode.upper()
+        mode_note = _fmt_mode(mode)
 
     print()
-    track_desc = ", ".join(str(i) for i in selected_indices)
+    track_desc = ", ".join(str(i + 1) for i in selected_indices)
     if max_ds == "cached":
-        count_desc = f"up to {DEFAULT_INTERACTIVE_COUNT} cached"
+        count_desc = ("1 cached subtitle each" if has_cues
+                      else f"up to {DEFAULT_INTERACTIVE_COUNT} cached subtitle(s) each")
     elif max_ds is not None:
-        count_desc = str(max_ds)
+        count_desc = (f"{max_ds} subtitle each" if max_ds == 1
+                      else f"{max_ds} subtitles each")
     else:
-        count_desc = "all"
-    print(f"{info('Processing')} track(s) [{track_desc}], {count_desc} subtitle(s) each.")
-    print(f"{info('Mode:')} {bold(mode_note)}  |  {info('Tonemap:')} {tonemap}  |  {info('Output:')} {out_dir}/")
+        count_desc = "all subtitles"
+    print(f"{bold('Processing')} track(s) [{track_desc}], {count_desc}.")
+    print()
+    print(f"{bold('Mode:')} {mode_note}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
     print()
 
     # === Phase 5: Extraction & rendering ===
@@ -817,8 +825,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             track_modes, track_tags, tonemap, nocrop, out_dir, threads,
             start=start, end=end)
         print()
-        print(f"{success('Done.')} {total_saved} total images across "
-              f"{len(selected_indices)} track(s) in {out_dir}/")
+        print(status_ok(f"{total_saved} total images across "
+                        f"{len(selected_indices)} track(s) in {out_dir}/"))
         return
 
     # Batch path with per-track limit and multiple tracks: single libpgs
@@ -832,8 +840,8 @@ def process_container(input_path: str, out_dir: str, mode: str,
             max_ds, preview_cache, start=start, end=end,
             has_cues=has_cues)
         print()
-        print(f"{success('Done.')} {total_saved} total images across "
-              f"{len(selected_indices)} track(s) in {out_dir}/")
+        print(status_ok(f"{total_saved} total images across "
+                        f"{len(selected_indices)} track(s) in {out_dir}/"))
         return
 
     # Sequential path: single track, or cache-only mode.
@@ -872,7 +880,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         start=start, end=end,
                     ))
                 except Exception as e:
-                    print(f"  {error('[error]')} Streaming extraction failed: {e}")
+                    print(f"  {error(f'Streaming extraction failed: {e}')}")
                     continue
             effective_limit = max_ds
         else:
@@ -884,7 +892,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     start=start, end=end,
                 )
             except Exception as e:
-                print(f"  {error('[error]')} Extraction failed: {e}")
+                print(f"  {error(f'Extraction failed: {e}')}")
                 continue
             saved = process_display_sets(
                 ds_iter, track_out, track_modes[ti], tonemap, nocrop,
@@ -920,5 +928,5 @@ def process_container(input_path: str, out_dir: str, mode: str,
         total_saved += saved
 
     print()
-    print(f"{success('Done.')} {total_saved} total images across "
-          f"{len(selected_indices)} track(s) in {out_dir}/")
+    print(status_ok(f"{total_saved} total images across "
+                    f"{len(selected_indices)} track(s) in {out_dir}/"))

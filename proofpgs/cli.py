@@ -7,7 +7,7 @@ import sys
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS, parse_timestamp
 from .libpgs import check_libpgs
 from .pipeline import process_sup_file, process_container
-from .style import dim, error, info, success, warn
+from .style import dim, info, status_err, status_ok, warn
 
 
 def main():
@@ -57,7 +57,7 @@ def _main():
                         help="Decode only the first N subtitles. "
                              "For containers, interactive prompt defaults to 10")
     parser.add_argument("--tracks", default=None,
-                        help="Track indices to process (comma-separated, e.g. 0,2,3). "
+                        help="Track indices to process (1-based, comma-separated, e.g. 1,3,4). "
                              "Use 'all' for all tracks. Default: prompt interactively")
     parser.add_argument("--nocrop", action="store_true",
                         help="Output full video-frame sized PNGs instead of cropping to content")
@@ -79,11 +79,11 @@ def _main():
             try:
                 parse_timestamp(val)
             except ValueError as e:
-                print(f"{error('[error]')} --{flag}: {e}", file=sys.stderr)
+                print(status_err(f"--{flag}: {e}"), file=sys.stderr)
                 sys.exit(1)
     if args.start is not None and args.end is not None:
         if parse_timestamp(args.end) <= parse_timestamp(args.start):
-            print(f"{error('[error]')} --end must be after --start", file=sys.stderr)
+            print(status_err("--end must be after --start"), file=sys.stderr)
             sys.exit(1)
 
     if args.install:
@@ -101,7 +101,7 @@ def _main():
         sys.exit(1)
 
     if not os.path.isfile(args.input_file):
-        print(f"{error('[error]')} File not found: {args.input_file}", file=sys.stderr)
+        print(status_err(f"File not found: {args.input_file}"), file=sys.stderr)
         sys.exit(1)
 
     if args.out is None:
@@ -121,7 +121,8 @@ def _main():
                                  interactive=True,
                                  start=args.start, end=args.end)
         if args.mode not in ("validate", "validate-fast"):
-            print(f"\n{success('Done.')} {saved} images written to {args.out}/")
+            print()
+            print(status_ok(f"{saved} images written to {args.out}/"))
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
@@ -129,8 +130,8 @@ def _main():
                           tracks_arg=args.tracks, threads=args.threads,
                           start=args.start, end=args.end)
     else:
-        print(f"{warn('[warn]')} Unrecognised extension '{ext}'. "
-              f"Attempting as container file...")
+        print(warn(f"Unrecognised extension '{ext}'. "
+                   f"Attempting as container file..."))
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
                           libpgs_path=libpgs_path,

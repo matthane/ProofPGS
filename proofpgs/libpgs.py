@@ -18,7 +18,7 @@ import time
 
 from .constants import ANALYSIS_RESTART_GRACE_S
 from .parser import ds_has_content
-from .style import error
+from .style import status_err
 
 _DEBUG = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
 
@@ -46,10 +46,10 @@ def check_libpgs() -> str:
     if on_path:
         return on_path
 
-    print(f"{error('[error]')} libpgs not found.\n"
-          f"        Place the binary in proofpgs/bin/ or add it to PATH.\n"
-          f"        https://github.com/matthane/libpgs",
+    print(status_err("libpgs not found."), file=sys.stderr)
+    print("        Place the binary in proofpgs/bin/ or add it to PATH.",
           file=sys.stderr)
+    print("        https://github.com/matthane/libpgs", file=sys.stderr)
     sys.exit(1)
 
 
