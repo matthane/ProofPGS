@@ -599,7 +599,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
 
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
-        print(f"  {bold('Mode:')} {_fmt_mode(mode)} {dim('(auto-detected)')}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
+        print(f"  {bold('Mode:')} {_fmt_mode(mode)} {dim('(auto-detected)')}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     else:
         if (detection["verdict"] is not None
                 and detection["verdict"] != mode
@@ -609,7 +609,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                 f"Warning: --mode {mode} specified but {det_label} "
                 f"content detected. Subtitles may appear incorrect."
             ))
-        print(f"  {bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
+        print(f"  {bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
@@ -807,7 +807,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         count_desc = "all subtitles"
     print(f"{bold('Processing')} track(s) [{track_desc}], {count_desc}.")
     print()
-    print(f"{bold('Mode:')} {mode_note}  |  {bold('Tonemap:')} {tonemap}  |  {bold('Output:')} {out_dir}/")
+    print(f"{bold('Mode:')} {mode_note}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     print()
 
     # === Phase 5: Extraction & rendering ===
