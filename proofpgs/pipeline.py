@@ -827,6 +827,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print()
         print(status_ok(f"{total_saved} total images across "
                         f"{len(selected_indices)} track(s) in {out_dir}/"))
+        print()
         return
 
     # Batch path with per-track limit and multiple tracks: single libpgs
@@ -842,6 +843,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print()
         print(status_ok(f"{total_saved} total images across "
                         f"{len(selected_indices)} track(s) in {out_dir}/"))
+        print()
         return
 
     # Sequential path: single track, or cache-only mode.
@@ -930,3 +932,4 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print()
     print(status_ok(f"{total_saved} total images across "
                     f"{len(selected_indices)} track(s) in {out_dir}/"))
+    print()

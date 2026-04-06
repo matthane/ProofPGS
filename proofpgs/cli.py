@@ -123,6 +123,7 @@ def _main():
         if args.mode not in ("validate", "validate-fast"):
             print()
             print(status_ok(f"{saved} images written to {args.out}/"))
+            print()
     elif ext in CONTAINER_EXTENSIONS:
         process_container(args.input_file, args.out, args.mode,
                           args.tonemap, args.first, args.nocrop,
