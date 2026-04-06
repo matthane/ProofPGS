@@ -39,7 +39,7 @@ _RESET = "\033[0m" if _use_color else ""
 # sequence.  Bare \033[1m or \033[1;97m often renders only as "bright"
 # without switching to the bold font face on Windows Terminal; a 24-bit
 # FG paired with the bold parameter triggers the bold-font path reliably.
-_BOLD  = "\033[38;2;255;255;255;1m" if _use_color else ""
+_BOLD  = "\033[38;2;130;160;210;1m" if _use_color else ""
 _DIM_SGR = "\033[2m" if _use_color else ""
 
 _ERROR   = _fg(215,  95,  95)   # soft red
@@ -80,11 +80,13 @@ def border(text):
 def bold(text):
     return f"{_BOLD}{text}{_RESET}"
 
+_WHITE = "\033[38;2;255;255;255m" if _use_color else ""
+
 def badge_hdr(text):
-    return f"{_HDR}{text}{_RESET}"
+    return f"{_WHITE}{text}{_RESET}"
 
 def badge_sdr(text):
-    return f"{_SDR}{text}{_RESET}"
+    return f"{_WHITE}{text}{_RESET}"
 
 def badge_compare(text):
     return f"{_COMPARE}{text}{_RESET}"
@@ -177,14 +179,14 @@ def box_top(title: str = "", width: int = BOX_WIDTH) -> str:
         if label_len >= inner:
             return (
                 border(_G['tl'])
-                + label[:inner]
+                + bold(label[:inner])
                 + border(_G['tr'])
             )
         left = (inner - label_len) // 2
         right = inner - label_len - left
         return (
             border(_G['tl'] + _G['h'] * left)
-            + label
+            + bold(label)
             + border(_G['h'] * right + _G['tr'])
         )
     return border(_G['tl'] + _G['h'] * inner + _G['tr'])

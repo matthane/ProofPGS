@@ -20,7 +20,7 @@ from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
                         DEFAULT_INTERACTIVE_COUNT)
 from .style import (
     warn, error, dim, bold,
-    badge_hdr, badge_sdr, badge_unknown, badge_mismatch,
+    badge_hdr, badge_sdr, badge_unknown,
     box_top, box_bottom, box_row, box_blank, box_sep, status_ok,
     glyph,
     CURSOR_UP_CLEAR,
@@ -263,20 +263,54 @@ def _print_track_listing(tracks, video_range=None):
 
     lines = ["", box_top(title)]
 
+    # Pre-check whether any track has a dynamic range mismatch.
+    any_mismatch = (
+        video_range is not None
+        and any(
+            not t.get("analysis_bailed")
+            and t.get("detection", {}).get("verdict") is not None
+            and t["detection"]["verdict"] != video_range
+            for t in tracks
+        )
+    )
+
     # Video stream header row (if known) + a blank row of breathing space.
     if video_range is not None:
-        if video_range == "hdr":
-            range_styled = badge_hdr(f"{glyph('hdr')} HDR")
-        else:
-            range_styled = badge_sdr(f"{glyph('sdr')} SDR")
-        lines.append(box_row(f" {dim('Video stream:')} {range_styled}"))
+        vs_text = f" {dim('Video stream:')} {video_range.upper()}"
+        if any_mismatch:
+            vs_text += f"   {warn(glyph('warn') + ' Dynamic range mismatch detected')}"
+        lines.append(box_row(vs_text))
         lines.append(box_blank())
 
     for ti, t in enumerate(tracks):
-        # --- Identity row: [i]  Language • "Title" [flags] • ~N subs ---
-        idx = bold(f"[{ti + 1}]".ljust(idx_w))
+        det = t.get("detection", {})
 
-        detail_parts = [t["language"]]
+        # Does this track's range differ from the video stream?
+        is_mismatch = (
+            video_range is not None
+            and not t.get("analysis_bailed")
+            and det.get("verdict") is not None
+            and det["verdict"] != video_range
+        )
+
+        # --- First row: [i]  HDR/SDR • Language • "Title" [flags] ---
+        idx_raw = f"[{ti + 1}]".ljust(idx_w)
+
+        detail_parts = []
+
+        if t.get("analysis_bailed"):
+            has_bailed = True
+            detail_parts.append(dim("not analyzed *"))
+        elif det.get("verdict") == "hdr":
+            detail_parts.append(warn(f"{glyph('warn')} HDR") if is_mismatch else "HDR")
+        elif det.get("verdict") == "sdr":
+            detail_parts.append(warn(f"{glyph('warn')} SDR") if is_mismatch else "SDR")
+        elif det.get("verdict"):
+            detail_parts.append(det["verdict"].upper())
+        else:
+            detail_parts.append(dim("unknown"))
+
+        detail_parts.append(t["language"])
         if t["title"]:
             detail_parts.append(f'"{t["title"]}"')
         flags = []
@@ -287,46 +321,28 @@ def _print_track_listing(tracks, video_range=None):
         if flags:
             detail_parts.append(f"[{', '.join(flags)}]")
 
+        sep = f"  {dim(glyph('dot'))}  "
+        detail = sep.join(detail_parts)
+        if t.get("analysis_bailed") or det.get("verdict") is None:
+            identity = f" {dim(idx_raw)}  {dim(detail)}"
+        else:
+            identity = f" {bold(idx_raw)}  {detail}"
+        lines.append(box_row(identity))
+
+        # --- Second row: stream N • ~N subs ---
+        attr_indent = " " + (" " * idx_w) + "  "
+        attr_parts = [dim(f"stream {t['index']}")]
+
         num_frames = t.get("num_frames")
         if num_frames and num_frames > 0:
             approx_subs = max(1, num_frames // 2)
-            detail_parts.append(dim(f"~{approx_subs:,} subs"))
+            attr_parts.append(dim(f"~{approx_subs:,} subs"))
 
-        sep = f"  {dim(glyph('dot'))}  "
-        detail = sep.join(detail_parts)
-        identity = f" {idx}  {detail}"
-        lines.append(box_row(identity))
+        if t.get("indexed"):
+            attr_parts.append(dim("indexed"))
 
-        # --- Attributes row: Mastered for <range>   Dynamic range mismatch ---
-        det = t.get("detection", {})
-        if t.get("analysis_bailed"):
-            has_bailed = True
-            badge_styled = badge_unknown("not analyzed *")
-        elif det.get("verdict") == "hdr":
-            badge_styled = badge_hdr(f"{glyph('hdr')} HDR")
-        elif det.get("verdict") == "sdr":
-            badge_styled = badge_sdr(f"{glyph('sdr')} SDR")
-        elif det.get("verdict"):
-            badge_styled = det["verdict"].upper()
-        else:
-            badge_styled = badge_unknown("unknown")
-
-        mismatch_styled = ""
-        if (video_range is not None
-                and not t.get("analysis_bailed")
-                and det.get("verdict") is not None
-                and det["verdict"] != video_range):
-            mismatch_styled = badge_mismatch(
-                f"{glyph('warn')} Dynamic range mismatch"
-            )
-
-        attr_bits = [badge_styled]
-        if mismatch_styled:
-            attr_bits.append(mismatch_styled)
-        # Indent attributes to align under the detail column: 1 leading
-        # space + idx_w + two-space gap.
-        attr_indent = " " + (" " * idx_w) + "  "
-        attr_line = attr_indent + "   ".join(attr_bits)
+        attr_sep = f"  {dim(glyph('dot'))}  "
+        attr_line = attr_indent + attr_sep.join(attr_parts)
         lines.append(box_row(attr_line))
 
         if ti < len(tracks) - 1:
@@ -675,6 +691,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
             "forced":     bool(t.get("is_forced")),
             "default":    bool(t.get("is_default")),
             "num_frames": t.get("display_set_count"),
+            "indexed":    bool(t.get("indexed")),
         })
 
     # Video range detection via ffprobe (advisory only).
