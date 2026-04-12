@@ -11,7 +11,7 @@ from .detect import detect_from_palettes, format_detection
 from .libpgs import (stream_file, discover_tracks, stream_all_tracks,
                      stream_file_multi_track,
                      stream_file_multi_track_progressive)
-from .ffmpeg import probe_video_range, build_track_folder_name, check_ffprobe
+from .ffmpeg import probe_video_stream, build_track_folder_name, check_ffprobe
 from .interactive import (
     select_tracks_interactive, select_count_interactive,
     select_count_interactive_sup, confirm_validate_bailed,
@@ -227,6 +227,17 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                     "max_pq_channel": 0, "num_palettes": 0,
                 }
 
+            # Composition size — read from the first display set with a
+            # valid composition. Per UHD BD spec, the graphics plane is
+            # fixed at 1920x1080 for the whole track, so the first is
+            # representative.
+            for d in ds:
+                comp = d.get("composition")
+                if comp is not None:
+                    t["composition_size"] = (comp["video_width"],
+                                             comp["video_height"])
+                    break
+
             # --- Bail-out ---
             t["analysis_bailed"] = (
                 content_count == 0 and t["detection"]["verdict"] is None
@@ -246,16 +257,19 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
             print(f" {dim(f'{elapsed:.1f}s')}")
 
 
-def _print_track_listing(tracks, video_range=None):
+def _print_track_listing(tracks, video_info=None):
     """Print the track listing with analysis results.
 
-    *video_range* (``"hdr"``/``"sdr"``/``None``) is the dynamic range of
-    the container's video stream.  When a subtitle track's detected range
-    differs, a "Dynamic range mismatch" badge is appended.
+    *video_info* is a dict ``{"range": "hdr"|"sdr", "width": int,
+    "height": int}`` from the container's video stream probe, or None.
+    When a subtitle track's detected range differs from ``video_info["range"]``,
+    a "Dynamic range mismatch" badge is appended.
 
     Returns True if any tracks were bailed (not analyzed).
     """
     has_bailed = False
+
+    video_range = video_info["range"] if video_info else None
 
     # Determine index-column width so `[1]` / `[10]` stay aligned.
     idx_w = max(len(f"[{ti}]") for ti in range(1, len(tracks) + 1))
@@ -274,8 +288,22 @@ def _print_track_listing(tracks, video_range=None):
     )
 
     # Video stream header row (if known) + a blank row of breathing space.
-    if video_range is not None:
+    if video_info is not None:
         vs_text = f" {dim('Video stream:')} {video_range.upper()}"
+        vh = video_info.get("height") or 0
+        if vh >= 2160:
+            vs_label = "4K"
+        elif vh >= 1080:
+            vs_label = "1080p"
+        elif vh >= 720:
+            vs_label = "720p"
+        elif vh > 0:
+            vw = video_info.get("width") or 0
+            vs_label = f"{vw}\u00d7{vh}"
+        else:
+            vs_label = None
+        if vs_label:
+            vs_text += f" ({vs_label})"
         if any_mismatch:
             vs_text += f"   {warn(glyph('warn') + ' Dynamic range mismatch detected')}"
         lines.append(box_row(vs_text))
@@ -336,6 +364,17 @@ def _print_track_listing(tracks, video_range=None):
         if num_frames and num_frames > 0:
             approx_subs = max(1, num_frames // 2)
             attr_parts.append(dim(f"~{approx_subs:,} subs"))
+
+        comp_size = t.get("composition_size")
+        if comp_size:
+            _comp_labels = {
+                (3840, 2160): "4K",
+                (1920, 1080): "1080p",
+                (1280, 720): "720p",
+            }
+            comp_label = _comp_labels.get(
+                comp_size, f"{comp_size[0]}\u00d7{comp_size[1]}")
+            attr_parts.append(dim(comp_label))
 
         if t.get("indexed"):
             attr_parts.append(dim("indexed"))
@@ -704,9 +743,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
             "indexed":    bool(t.get("indexed")),
         })
 
-    # Video range detection via ffprobe (advisory only).
+    # Video stream probe via ffprobe (advisory only).
     ffprobe_path = check_ffprobe()
-    video_range = probe_video_range(ffprobe_path, input_path) if ffprobe_path else None
+    video_info = probe_video_stream(ffprobe_path, input_path) if ffprobe_path else None
 
     # === Phase 2: Single-pass analysis ===
     preview_cache = {}  # ti -> list of display sets
@@ -723,7 +762,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         reuse_proc=kept_proc, reuse_tracks=raw_tracks)
 
     # === Phase 3: Display track listing ===
-    has_bailed = _print_track_listing(tracks, video_range=video_range)
+    has_bailed = _print_track_listing(tracks, video_info=video_info)
 
     if mode in ("validate", "validate-fast"):
         if has_bailed and sys.stdin.isatty():
@@ -736,7 +775,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                                 input_path, preview_cache,
                                 budget=None, has_cues=has_cues)
                 print(CURSOR_UP_CLEAR, end="", flush=True)
-                _print_track_listing(tracks, video_range=video_range)
+                _print_track_listing(tracks, video_info=video_info)
         return
 
     # === Phase 4: Track selection (with [v] validate for bailed tracks) ===
@@ -769,7 +808,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                                     input_path, preview_cache,
                                     budget=None, has_cues=has_cues)
                     print(CURSOR_UP_CLEAR, end="", flush=True)
-                    has_bailed = _print_track_listing(tracks, video_range=video_range)
+                    has_bailed = _print_track_listing(tracks, video_info=video_info)
                     continue
                 selected_indices = selection
                 break

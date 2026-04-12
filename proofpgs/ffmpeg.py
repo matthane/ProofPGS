@@ -24,8 +24,8 @@ _SDR_TRANSFERS = {
 _HDR_PRIMARIES = {"bt2020"}
 
 
-def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
-    """Detect the video stream's dynamic range from color metadata.
+def probe_video_stream(ffprobe_path: str, input_path: str) -> dict | None:
+    """Detect the video stream's dynamic range and resolution.
 
     Probes video streams and examines the main video stream's
     ``color_transfer`` field.  Falls back to ``color_primaries``
@@ -37,8 +37,9 @@ def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
 
     Attached pictures (cover art) are skipped.
 
-    Returns ``"hdr"``, ``"sdr"``, or ``None`` (no real video stream).
-    Advisory only -- never raises on failure.
+    Returns a dict ``{"range": "hdr"|"sdr", "width": int, "height": int}``
+    or ``None`` (no real video stream).  Width/height may be 0 if the
+    stream doesn't report them.  Advisory only -- never raises on failure.
     """
     try:
         result = subprocess.run(
@@ -69,28 +70,31 @@ def probe_video_range(ffprobe_path: str, input_path: str) -> str | None:
             chosen = s
             break
 
+    width = int(chosen.get("width") or chosen.get("coded_width") or 0)
+    height = int(chosen.get("height") or chosen.get("coded_height") or 0)
+
     # 1. Explicit transfer characteristics (strongest signal).
     transfer = chosen.get("color_transfer", "")
     if transfer in _HDR_TRANSFERS:
-        return "hdr"
+        return {"range": "hdr", "width": width, "height": height}
     if transfer in _SDR_TRANSFERS:
-        return "sdr"
+        return {"range": "sdr", "width": width, "height": height}
 
     # 2. Color primaries fallback (BT.2020 implies HDR/WCG).
     primaries = chosen.get("color_primaries", "")
     if primaries in _HDR_PRIMARIES:
-        return "hdr"
+        return {"range": "hdr", "width": width, "height": height}
 
     # 3. Dolby Vision side data — DV Profile 5 (and others) may lack
     #    standard color_transfer/color_primaries metadata entirely.
     for sd in chosen.get("side_data_list", []):
         if sd.get("side_data_type") == "DOVI configuration record":
-            return "hdr"
+            return {"range": "hdr", "width": width, "height": height}
 
     # 4. No HDR indicators — SDR is the default for video content.
     #    SDR Blu-ray rips (H.264/1080p) almost never carry explicit
     #    color metadata; HDR standards require signaling.
-    return "sdr"
+    return {"range": "sdr", "width": width, "height": height}
 
 
 def build_track_folder_name(pgs_index: int, track_info: dict) -> str:

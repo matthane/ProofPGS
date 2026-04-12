@@ -15,7 +15,7 @@ python -m proofpgs <input_file> [options]
 - Python 3.10+
 - `numpy`, `pillow` — `pip install numpy pillow`
 - `libpgs` — bundled binary in `proofpgs/bin/` (or on PATH). Handles all PGS file I/O (`.sup`, MKV, M2TS). See [github.com/matthane/libpgs](https://github.com/matthane/libpgs).
-- FFmpeg / ffprobe on PATH (optional — only needed for the video stream dynamic range mismatch badge via `probe_video_range()`)
+- FFmpeg / ffprobe on PATH (optional — only needed for the video stream dynamic range mismatch badge via `probe_video_stream()`)
 
 There is no test suite. Validation is done by visual inspection of the output PNGs.
 
@@ -30,7 +30,7 @@ There is no test suite. Validation is done by visual inspection of the output PN
 | `parser.py` | `ds_has_content()` — checks if a display set has renderable content |
 | `renderer.py` | Multi-threaded display set rendering and PNG output |
 | `libpgs.py` | Adapter for the libpgs CLI — subprocess streaming, track discovery, display-set conversion |
-| `ffmpeg.py` | ffprobe video range detection (`probe_video_range()`), track folder naming |
+| `ffmpeg.py` | ffprobe video stream probe (`probe_video_stream()` — range + resolution), track folder naming |
 | `interactive.py` | Interactive track/count prompts |
 | `shellmenu.py` | File manager context menu install/uninstall (Windows registry, Linux `.desktop` files, macOS Automator Quick Actions) |
 | `constants.py` | PQ constants, file extensions, analysis budget (`Budget` class) |
@@ -97,7 +97,7 @@ Output filenames include the decoded range as a suffix: `ds_0001_1234ms_sdr.png`
 **Secondary signals:** Y-value thresholds (≥210 SDR, ≤170 HDR) and achromatic entry analysis (Cb/Cr near 128) handle cases where the PQ test is inconclusive.
 
 ### Dynamic range mismatch badge
-For container inputs, `probe_video_range()` in `ffmpeg.py` runs a separate ffprobe query on video streams to detect the video's dynamic range. This is the only remaining use of ffprobe — if ffprobe is not on PATH, the mismatch badge is silently skipped. It checks `color_transfer` first (`smpte2084`/`arib-std-b67` → HDR, `bt709`/`smpte170m`/etc. → SDR), falls back to `color_primaries` (`bt2020` → HDR), then checks `side_data_list` for a Dolby Vision configuration record (DV Profile 5 and others may lack standard color metadata entirely), then defaults to SDR — because SDR Blu-ray rips almost never carry explicit color metadata, while HDR standards require signaling. Attached pictures (cover art) are skipped. The track listing shows a `Video stream: HDR/SDR` header and appends a `Dynamic range mismatch` badge (amber) to any subtitle track whose palette-based detection verdict differs from the video stream's range. This is **informational only** — it does not affect subtitle processing or detection. Video stream metadata is still intentionally not used for detection itself.
+For container inputs, `probe_video_stream()` in `ffmpeg.py` runs a separate ffprobe query on video streams to detect the video's dynamic range and resolution. This is the only remaining use of ffprobe — if ffprobe is not on PATH, the mismatch badge and resolution label are silently skipped. It checks `color_transfer` first (`smpte2084`/`arib-std-b67` → HDR, `bt709`/`smpte170m`/etc. → SDR), falls back to `color_primaries` (`bt2020` → HDR), then checks `side_data_list` for a Dolby Vision configuration record (DV Profile 5 and others may lack standard color metadata entirely), then defaults to SDR — because SDR Blu-ray rips almost never carry explicit color metadata, while HDR standards require signaling. Attached pictures (cover art) are skipped. The track listing shows a `Video stream: HDR/SDR (4K|1080p|720p)` header and appends a `Dynamic range mismatch` badge (amber) to any subtitle track whose palette-based detection verdict differs from the video stream's range. This is **informational only** — it does not affect subtitle processing or detection. Video stream metadata is still intentionally not used for detection itself.
 
 ### File manager context menu
 `--install` registers context menu entries for all supported file types on the current platform. `--uninstall` removes them. Running `--install` again is idempotent and updates the paths. Mode entries are split into two groups: `.sup` files get a simple "Validate" entry (direct parsing, no FFmpeg budget), while containers get both "Validate (may be slow)" and "Validate fast (skips sparse tracks)". The menu is context-sensitive — users only see modes relevant to the file they right-clicked.
