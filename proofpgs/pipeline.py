@@ -19,10 +19,10 @@ from .interactive import (
 from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
                         DEFAULT_INTERACTIVE_COUNT)
 from .style import (
-    warn, error, dim, bold,
+    warn, error, dim, dim_bold, bold,
     badge_hdr, badge_sdr, badge_unknown,
     box_top, box_bottom, box_row, box_blank, box_sep, status_ok,
-    glyph,
+    glyph, BOX_WIDTH,
     CURSOR_UP_CLEAR,
 )
 
@@ -256,12 +256,11 @@ def _print_track_listing(tracks, video_range=None):
     Returns True if any tracks were bailed (not analyzed).
     """
     has_bailed = False
-    title = f"{len(tracks)} PGS Subtitle Track(s)"
 
     # Determine index-column width so `[1]` / `[10]` stay aligned.
     idx_w = max(len(f"[{ti}]") for ti in range(1, len(tracks) + 1))
 
-    lines = ["", box_top(title)]
+    lines = ["", box_top()]
 
     # Pre-check whether any track has a dynamic range mismatch.
     any_mismatch = (
@@ -348,6 +347,17 @@ def _print_track_listing(tracks, video_range=None):
         if ti < len(tracks) - 1:
             lines.append(box_sep())
 
+    # Footer: ProofPGS vX.Y.Z right-aligned.  Name is bold+dim, version
+    # stays plain dim so the brand label reads a touch stronger than the
+    # version suffix without pulling attention from the track list above.
+    from . import __version__
+    version_str = f"v{__version__}"
+    footer_plain = f"ProofPGS {version_str}"
+    footer_styled = f"{dim_bold('ProofPGS')} {dim(version_str)}"
+    inner = BOX_WIDTH - 4  # content area width inside "│ " ... " │"
+    lead = " " * max(0, inner - len(footer_plain))
+    lines.append(box_blank())
+    lines.append(box_row(lead + footer_styled))
     lines.append(box_bottom())
 
     for line in lines:

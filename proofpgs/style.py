@@ -48,6 +48,9 @@ _SUCCESS = _fg(115, 190, 120)   # soft green
 _INFO    = _fg(130, 160, 210)   # soft blue
 _HEADING = _fg(180, 190, 210)   # light blue-gray (section titles)
 _DIM     = _fg(110, 110, 120)   # dim text
+# Dim slate paired with bold weight — used for muted brand labels where the
+# glyphs should still carry the bold font face.
+_DIM_BOLD = "\033[38;2;110;110;120;1m" if _use_color else ""
 _BORDER  = _fg(80,   85,  95)   # dark gray borders
 _HDR     = _fg(220, 140, 160)   # soft rose
 _SDR     = _fg(120, 190, 200)   # soft cyan
@@ -79,6 +82,9 @@ def border(text):
 
 def bold(text):
     return f"{_BOLD}{text}{_RESET}"
+
+def dim_bold(text):
+    return f"{_DIM_BOLD}{text}{_RESET}"
 
 _WHITE = "\033[38;2;255;255;255m" if _use_color else ""
 
