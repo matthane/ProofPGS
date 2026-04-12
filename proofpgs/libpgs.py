@@ -23,6 +23,17 @@ from .style import status_err
 _DEBUG = os.environ.get("PROOFPGS_DEBUG_ANALYSIS")
 
 
+def _cleanup_proc(proc: subprocess.Popen) -> None:
+    """Close stdout and kill a subprocess if still running."""
+    try:
+        proc.stdout.close()
+    except Exception:
+        pass
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait()
+
+
 # ---------------------------------------------------------------------------
 # Binary discovery
 # ---------------------------------------------------------------------------
@@ -240,13 +251,7 @@ def stream_file(libpgs_path: str, input_path: str,
                 break
 
     finally:
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        if proc.poll() is None:
-            proc.kill()
-        proc.wait()
+        _cleanup_proc(proc)
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +389,7 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
                     if tid not in done_tracks:
                         raw_queues[tid].put(None)
                         done_tracks.add(tid)
-            try:
-                proc.stdout.close()
-            except Exception:
-                pass
-            if proc.poll() is None:
-                proc.kill()
-            proc.wait()
+            _cleanup_proc(proc)
 
     reader = threading.Thread(target=_reader, daemon=True)
     reader.start()
@@ -527,13 +526,7 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
             except Exception:
                 pass
             finally:
-                try:
-                    proc.stdout.close()
-                except Exception:
-                    pass
-                if proc.poll() is None:
-                    proc.kill()
-                proc.wait()
+                _cleanup_proc(proc)
 
             # Update remaining tracks.
             with done_lock:
@@ -775,12 +768,6 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
 
     finally:
         _watchdog_cancel.set()
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        if proc.poll() is None:
-            proc.kill()
-        proc.wait()
+        _cleanup_proc(proc)
 
     return track_data, concluded_tids

@@ -20,12 +20,19 @@ from .constants import (Budget, LISTING_BUDGET_S, ANALYSIS_MAX_DS,
                         DEFAULT_INTERACTIVE_COUNT)
 from .style import (
     warn, error, dim, dim_bold, bold,
-    badge_hdr, badge_sdr, badge_unknown,
     box_top, box_bottom, box_row, box_blank, box_sep, status_ok,
     glyph, BOX_WIDTH,
     CURSOR_UP_CLEAR,
 )
 
+
+
+def _track_label(track: dict) -> str:
+    """Build a human-readable label like ``Stream 3: English "Commentary"``."""
+    label = f"Stream {track['index']}: {track['language']}"
+    if track["title"]:
+        label += f' "{track["title"]}"'
+    return label
 
 
 def _resolve_auto_mode(detection: dict) -> str:
@@ -446,9 +453,7 @@ def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
         track = tracks[ti]
         folder_name = build_track_folder_name(ti, track)
         track_out = os.path.join(out_dir, folder_name)
-        track_label = f"Stream {track['index']}: {track['language']}"
-        if track["title"]:
-            track_label += f' "{track["title"]}"'
+        track_label = _track_label(track)
 
         q_iter = iterators[track["track_id"]]
 
@@ -554,9 +559,7 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
             track = tracks[ti]
             folder_name = build_track_folder_name(ti, track)
             track_out = os.path.join(out_dir, folder_name)
-            track_label = f"Stream {track['index']}: {track['language']}"
-            if track["title"]:
-                track_label += f' "{track["title"]}"'
+            track_label = _track_label(track)
 
             q_iter = iterators[track["track_id"]]
             tid = track["track_id"]
@@ -587,9 +590,7 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
         track = tracks[ti]
         folder_name = build_track_folder_name(ti, track)
         track_out = os.path.join(out_dir, folder_name)
-        track_label = f"Stream {track['index']}: {track['language']}"
-        if track["title"]:
-            track_label += f' "{track["title"]}"'
+        track_label = _track_label(track)
 
         cached = preview_cache[ti]
 
@@ -949,9 +950,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
         content_ds = ([d for d in cached if ds_has_content(d)]
                       if cached else [])
 
-        track_label = f"Stream {track['index']}: {track['language']}"
-        if track["title"]:
-            track_label += f' "{track["title"]}"'
+        track_label = _track_label(track)
 
         if max_ds is not None and max_ds == "cached":
             # Cache-only mode: use whatever was collected during analysis.
