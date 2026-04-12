@@ -4,25 +4,26 @@ import re
 import time
 
 
+# ---------------------------------------------------------------------------
 # PQ (ST 2084) constants
+# ---------------------------------------------------------------------------
+
 PQ_M1 = 0.1593017578125
 PQ_M2 = 78.84375
 PQ_C1 = 0.8359375
 PQ_C2 = 18.8515625
 PQ_C3 = 18.6875
 
+# ---------------------------------------------------------------------------
 # Recognised file extensions
+# ---------------------------------------------------------------------------
+
 SUP_EXTENSIONS = {".sup"}
 CONTAINER_EXTENSIONS = {".mkv", ".mk3d", ".m2ts"}
 
-
-def format_time(seconds: float) -> str:
-    """Format seconds as HH:MM:SS."""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
+# ---------------------------------------------------------------------------
+# Timestamp parsing
+# ---------------------------------------------------------------------------
 
 # Matches HH:MM:SS.ms, MM:SS.ms, SS.ms, or plain seconds (e.g. 300, 5.5).
 _TIMESTAMP_RE = re.compile(
@@ -64,14 +65,6 @@ LISTING_BUDGET_S = 10.0
 # Target display sets per track for analysis.
 ANALYSIS_MAX_DS = 125
 
-# Default number of content display sets to render when the user
-# accepts the interactive "cached" default (no additional extraction).
-DEFAULT_INTERACTIVE_COUNT = 10
-
-# PNG compression level (0-9).  Lower = faster encoding, larger files.
-# Level 1 is a good balance for transient inspection PNGs.
-PNG_COMPRESS_LEVEL = 1
-
 # Grace period (seconds) after the last track validation before
 # restarting libpgs with remaining tracks.  Co-located language tracks
 # at the same timestamps produce a burst of display sets in
@@ -102,3 +95,20 @@ class Budget:
     def deadline(self) -> float:
         """Absolute monotonic timestamp when the budget expires."""
         return self._start + self._total
+
+
+# ---------------------------------------------------------------------------
+# Extraction defaults
+# ---------------------------------------------------------------------------
+
+# Default number of content display sets to render when the user
+# accepts the interactive "cached" default (no additional extraction).
+DEFAULT_INTERACTIVE_COUNT = 10
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+# PNG compression level (0-9).  Lower = faster encoding, larger files.
+# Level 1 is a good balance for transient inspection PNGs.
+PNG_COMPRESS_LEVEL = 1

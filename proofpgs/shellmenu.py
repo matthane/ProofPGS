@@ -485,11 +485,6 @@ def _services_dir() -> Path:
     return Path.home() / "Library" / "Services"
 
 
-def _icon_path_macos() -> str:
-    """Return absolute path to the PNG icon."""
-    return str(Path(__file__).resolve().parent / "assets" / "proofpgs-icon-dark.png")
-
-
 def _build_shell_script_macos(mode: str, extensions: list[str], *,
                                proofpgs_exe: str | None = None,
                                python_exe: str | None = None,

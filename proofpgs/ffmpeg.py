@@ -9,7 +9,7 @@ def check_ffprobe() -> str | None:
     """Find ffprobe on PATH.
 
     Returns the path to ffprobe, or None if not found.
-    ffprobe is only needed for probe_video_range() (mismatch badge).
+    ffprobe is only needed for probe_video_stream() (mismatch badge).
     """
     return shutil.which("ffprobe")
 

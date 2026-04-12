@@ -46,7 +46,6 @@ _ERROR   = _fg(215,  95,  95)   # soft red
 _WARN    = _fg(220, 180,  90)   # soft amber
 _SUCCESS = _fg(115, 190, 120)   # soft green
 _INFO    = _fg(130, 160, 210)   # soft blue
-_HEADING = _fg(180, 190, 210)   # light blue-gray (section titles)
 _DIM     = _fg(110, 110, 120)   # dim text
 # Dim slate paired with bold weight — used for muted brand labels where the
 # glyphs should still carry the bold font face.
@@ -70,9 +69,6 @@ def success(text):
 
 def info(text):
     return f"{_INFO}{text}{_RESET}"
-
-def heading(text):
-    return f"{_BOLD}{_HEADING}{text}{_RESET}"
 
 def dim(text):
     return f"{_DIM}{text}{_RESET}"
@@ -175,7 +171,7 @@ def _visible_len(s: str) -> int:
 def box_top(title: str = "", width: int = BOX_WIDTH) -> str:
     """Return the top border of a box, with an optional centered title.
 
-    The title is rendered via ``heading()`` (bold soft blue); the border
+    The title is rendered via ``bold()``; the border
     uses the dim slate color so the frame stays quiet.
     """
     inner = width - 2  # chars between corners

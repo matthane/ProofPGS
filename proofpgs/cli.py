@@ -7,7 +7,7 @@ import sys
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS, parse_timestamp
 from .libpgs import check_libpgs
 from .pipeline import process_sup_file, process_container
-from .style import bold, dim, info, status_err, status_ok, warn
+from .style import bold, dim, status_err, status_ok, warn
 
 
 def main():
