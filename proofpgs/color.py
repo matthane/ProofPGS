@@ -114,9 +114,12 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     B_out = np.clip(np.round(srgb_gamma(B_709) * 255.0), 0, 255).astype(np.uint8)
 
     lut = np.zeros((256, 4), dtype=np.uint8)
-    for i, eid in enumerate(ids):
-        if 0 <= eid <= 255:
-            lut[eid] = [R_out[i], G_out[i], B_out[i], int(A[i])]
+    mask = (ids >= 0) & (ids <= 255)
+    valid = ids[mask]
+    lut[valid, 0] = R_out[mask]
+    lut[valid, 1] = G_out[mask]
+    lut[valid, 2] = B_out[mask]
+    lut[valid, 3] = A[mask].astype(np.uint8)
     return lut
 
 
@@ -163,7 +166,10 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     B_out = np.clip(np.round(srgb_gamma(B_lin) * 255.0), 0, 255).astype(np.uint8)
 
     lut = np.zeros((256, 4), dtype=np.uint8)
-    for i, eid in enumerate(ids):
-        if 0 <= eid <= 255:
-            lut[eid] = [R_out[i], G_out[i], B_out[i], int(A[i])]
+    mask = (ids >= 0) & (ids <= 255)
+    valid = ids[mask]
+    lut[valid, 0] = R_out[mask]
+    lut[valid, 1] = G_out[mask]
+    lut[valid, 2] = B_out[mask]
+    lut[valid, 3] = A[mask].astype(np.uint8)
     return lut

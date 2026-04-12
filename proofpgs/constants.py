@@ -68,6 +68,10 @@ ANALYSIS_MAX_DS = 125
 # accepts the interactive "cached" default (no additional extraction).
 DEFAULT_INTERACTIVE_COUNT = 10
 
+# PNG compression level (0-9).  Lower = faster encoding, larger files.
+# Level 1 is a good balance for transient inspection PNGs.
+PNG_COMPRESS_LEVEL = 1
+
 # Grace period (seconds) after the last track validation before
 # restarting libpgs with remaining tracks.  Co-located language tracks
 # at the same timestamps produce a burst of display sets in

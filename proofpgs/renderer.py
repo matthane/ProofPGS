@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from .constants import PNG_COMPRESS_LEVEL
 from .style import warn, dim, info
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
@@ -80,9 +81,9 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
 
         rgba    = lut[indices]                          # (h, w, 4) uint8
         obj_img = Image.fromarray(rgba, mode="RGBA")
-        temp = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        temp.paste(obj_img, (x_pos, y_pos))
-        canvas = Image.alpha_composite(canvas, temp)
+        region = canvas.crop((x_pos, y_pos, x_pos + w, y_pos + h))
+        composited = Image.alpha_composite(region, obj_img)
+        canvas.paste(composited, (x_pos, y_pos))
 
     return canvas, pts_ms
 
@@ -277,11 +278,10 @@ def _render_and_save(ds, i, out_dir, mode, tonemap, nocrop):
         img = crop_to_content(img)
 
     fname = f"ds_{i:04d}_{pts_ms:.0f}ms_{mode}.png"
-    arr = np.array(img)
-    if arr[:, :, 3].min() < 255:
-        img.save(os.path.join(out_dir, fname))
+    if img.getextrema()[3][0] < 255:
+        img.save(os.path.join(out_dir, fname), compress_level=PNG_COMPRESS_LEVEL)
     else:
-        img.convert("RGB").save(os.path.join(out_dir, fname))
+        img.convert("RGB").save(os.path.join(out_dir, fname), compress_level=PNG_COMPRESS_LEVEL)
     return (i, pts_ms, fname)
 
 
@@ -394,7 +394,7 @@ def _render_and_save_compare(ds, i, out_dir, nocrop, res):
               res.footer_text, fill=res.footer_color, font=res.footer_font)
 
     fname = f"ds_{i:04d}_{pts_ms:.0f}ms_compare.png"
-    combined.convert("RGB").save(os.path.join(out_dir, fname))
+    combined.convert("RGB").save(os.path.join(out_dir, fname), compress_level=PNG_COMPRESS_LEVEL)
     return (i, pts_ms, fname)
 
 
