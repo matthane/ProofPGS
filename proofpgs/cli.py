@@ -7,7 +7,7 @@ import sys
 from .constants import SUP_EXTENSIONS, CONTAINER_EXTENSIONS, parse_timestamp
 from .libpgs import check_libpgs
 from .pipeline import process_sup_file, process_container
-from .style import dim, info, status_err, status_ok, warn
+from .style import bold, dim, info, status_err, status_ok, warn
 
 
 def main():
@@ -113,7 +113,8 @@ def _main():
     ext = os.path.splitext(args.input_file)[1].lower()
 
     if ext in SUP_EXTENSIONS:
-        print(f"{info('Reading:')} {args.input_file}")
+        print()
+        print(f"{bold('Analyzing')} {os.path.basename(args.input_file)}...")
         saved = process_sup_file(args.input_file, args.out, args.mode,
                                  args.tonemap, args.first, args.nocrop,
                                  libpgs_path=libpgs_path,

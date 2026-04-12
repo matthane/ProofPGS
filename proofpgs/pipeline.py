@@ -642,17 +642,42 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     display_sets = list(stream_file(libpgs_path, sup_path,
                                     start=start, end=end))
     total = sum(1 for ds in display_sets if ds_has_content(ds))
-    print(f"  {bold('Found')} {total} subtitle display sets {dim(f'({len(display_sets)} total incl. clears)')}")
 
     # Color space detection
     detection = detect_from_palettes(display_sets)
     v = detection["verdict"]
+
+    # Detection label for the box row
     if v == "hdr":
-        print(f"  {badge_hdr('Mastered for HDR')}")
+        det_label = "HDR"
     elif v == "sdr":
-        print(f"  {badge_sdr('Mastered for SDR')}")
+        det_label = "SDR"
     else:
-        print(f"  {bold('Detected:')} {format_detection(detection)}")
+        det_label = format_detection(detection)
+
+    # Count description
+    count_desc = f"{total} subtitle display sets"
+    if len(display_sets) != total:
+        count_desc += f" {dim(f'({len(display_sets)} total incl. clears)')}"
+
+    sep = f"  {dim(glyph('dot'))}  "
+    summary_row = f" {det_label}{sep}{count_desc}"
+
+    # Version footer (same pattern as _print_track_listing)
+    from . import __version__
+    version_str = f"v{__version__}"
+    footer_plain = f"ProofPGS {version_str}"
+    footer_styled = f"{dim_bold('ProofPGS')} {dim(version_str)}"
+    inner = BOX_WIDTH - 4
+    lead = " " * max(0, inner - len(footer_plain))
+
+    print()
+    print(box_top())
+    print(box_row(summary_row))
+    print(box_blank())
+    print(box_row(lead + footer_styled))
+    print(box_bottom())
+    print()
 
     if mode in ("validate", "validate-fast"):
         return 0
@@ -664,7 +689,7 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
 
     if mode == "auto":
         mode = _resolve_auto_mode(detection)
-        print(f"  {bold('Mode:')} {_fmt_mode(mode)} {dim('(auto-detected)')}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
+        print(f"{bold('Mode:')} {_fmt_mode(mode)} {dim('(auto-detected)')}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     else:
         if (detection["verdict"] is not None
                 and detection["verdict"] != mode
@@ -674,7 +699,8 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                 f"Warning: --mode {mode} specified but {det_label} "
                 f"content detected. Subtitles may appear incorrect."
             ))
-        print(f"  {bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
+        print(f"{bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
+    print()
 
     return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
