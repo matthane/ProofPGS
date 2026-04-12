@@ -223,8 +223,9 @@ def _build_compare_resources(detection, tonemap, input_name, track_name):
     icon_w = 0
     gap = 12
 
-    _sdr_w = label_font.getlength("BT.709 (SDR DECODE)")
-    _hdr_w = label_font.getlength(f"BT.2020+PQ -> BT.709 ({tonemap.upper()})")
+    _sdr_w = label_font.getlength("SDR DECODE \u2014 BT.709")
+    _hdr_w = label_font.getlength(
+        f"HDR DECODE \u2014 BT.2020+PQ -> BT.709 ({tonemap.upper()})")
     if detected_side:
         check_icon = _render_check_icon(icon_r, green)
         x_icon     = _render_x_icon(icon_r, red)
@@ -322,8 +323,8 @@ def _render_and_save_compare(ds, i, out_dir, nocrop, res):
     sdr_x = pad
     hdr_x = pad + w + gutter
 
-    sdr_label = "BT.709 (SDR DECODE)"
-    hdr_label = f"BT.2020+PQ -> BT.709 ({res.tonemap.upper()})"
+    sdr_label = "SDR DECODE \u2014 BT.709"
+    hdr_label = f"HDR DECODE \u2014 BT.2020+PQ -> BT.709 ({res.tonemap.upper()})"
     text_y = pad + 6
     draw.text((sdr_x + 4, text_y), sdr_label,
               fill=(180, 180, 180, 255), font=res.label_font)
