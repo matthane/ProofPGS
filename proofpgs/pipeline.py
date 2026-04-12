@@ -640,13 +640,37 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      start: str = None,
                      end: str = None) -> int:
     """Decode a .sup file and write PNGs to out_dir. Returns images saved."""
-    display_sets = list(stream_file(libpgs_path, sup_path,
-                                    start=start, end=end))
-    total = sum(1 for ds in display_sets if ds_has_content(ds))
+    manifest = {}
 
-    # Color space detection
-    detection = detect_from_palettes(display_sets)
+    def _on_header(hdr):
+        manifest.update(hdr)
+
+    # Phase 1: Analysis — cap at ANALYSIS_MAX_DS content display sets
+    # (matches container behavior; libpgs exits the pipe early). Request
+    # the manifest header so we get the total display-set count from
+    # libpgs's cheap pre-scan rather than having to stream the whole file.
+    analysis_ds = list(stream_file(libpgs_path, sup_path,
+                                   start=start, end=end,
+                                   max_ds=ANALYSIS_MAX_DS,
+                                   on_header=_on_header,
+                                   with_header=True))
+
+    detection = detect_from_palettes(analysis_ds)
     v = detection["verdict"]
+
+    # Totals come from the manifest pre-scan. If the libpgs binary is too
+    # old to emit the header, fall back to streaming the full file once
+    # for the count — and reuse that list for rendering so we only pay
+    # for one full read.
+    full_ds = None
+    if manifest.get("total_content_display_sets") is not None:
+        total = manifest["total_content_display_sets"]
+        total_all = manifest.get("total_display_sets", total)
+    else:
+        full_ds = list(stream_file(libpgs_path, sup_path,
+                                   start=start, end=end))
+        total = sum(1 for ds in full_ds if ds_has_content(ds))
+        total_all = len(full_ds)
 
     # Detection label for the box row
     if v == "hdr":
@@ -656,10 +680,9 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     else:
         det_label = format_detection(detection)
 
-    # Count description
     count_desc = f"{total} subtitle display sets"
-    if len(display_sets) != total:
-        count_desc += f" {dim(f'({len(display_sets)} total incl. clears)')}"
+    if total_all != total:
+        count_desc += f" {dim(f'({total_all} total incl. clears)')}"
 
     sep = f"  {dim(glyph('dot'))}  "
     summary_row = f" {det_label}{sep}{count_desc}"
@@ -703,7 +726,19 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
         print(f"{bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     print()
 
-    return process_display_sets(display_sets, out_dir, mode, tonemap, nocrop,
+    # Phase 2: Render — reuse the analysis cache when it already holds
+    # enough content, otherwise stream fresh. If we had to fall back to a
+    # full pre-scan (old libpgs binary), reuse that list directly.
+    analysis_content = sum(1 for ds in analysis_ds if ds_has_content(ds))
+    if full_ds is not None:
+        render_ds = full_ds
+    elif first is not None and first <= analysis_content:
+        render_ds = analysis_ds
+    else:
+        render_ds = stream_file(libpgs_path, sup_path,
+                                start=start, end=end)
+
+    return process_display_sets(render_ds, out_dir, mode, tonemap, nocrop,
                                 limit=first, detection=detection,
                                 input_name=input_name or os.path.basename(sup_path),
                                 track_name=track_name,

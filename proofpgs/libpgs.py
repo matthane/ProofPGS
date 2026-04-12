@@ -185,6 +185,8 @@ def stream_file(libpgs_path: str, input_path: str,
                 max_ds: int = None,
                 start: str = None,
                 end: str = None,
+                on_header=None,
+                with_header: bool = False,
 ):
     """Stream display sets from libpgs for a single file/track.
 
@@ -212,6 +214,8 @@ def stream_file(libpgs_path: str, input_path: str,
         cmd += ["--start", start]
     if end is not None:
         cmd += ["--end", end]
+    if with_header:
+        cmd += ["--with-header"]
 
     proc = subprocess.Popen(
         cmd,
@@ -228,6 +232,12 @@ def stream_file(libpgs_path: str, input_path: str,
                 continue
 
             obj = json.loads(line)
+
+            # .sup manifest header (emitted only for .sup inputs)
+            if obj.get("type") == "header":
+                if on_header is not None:
+                    on_header(obj)
+                continue
 
             # Skip the tracks header line
             if obj.get("type") == "tracks":
