@@ -191,7 +191,8 @@ The result is the closest possible SDR/BT.709 representation of the original HDR
 ### SDR (standard Blu-ray)
 
 ```
-BT.709 YCbCr (limited range)  ->  BT.709 matrix  ->  BT.1886 linearise (gamma 2.4)  ->  sRGB gamma  ->  PNG
+BT.709 YCbCr (limited range)  ->  BT.709 matrix  ->  BT.1886 linearise (gamma 2.4)
+  ->  sRGB gamma  ->  PNG
 ```
 
 ## Performance
