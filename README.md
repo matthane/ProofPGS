@@ -1,4 +1,4 @@
-<img src="proofpgs/assets/proofpgs-icon-light.png" width="64" height="64" alt="ProofPGS icon">
+<img src="https://raw.githubusercontent.com/matthane/ProofPGS/refs/heads/main/proofpgs/assets/proofpgs-icon-light.png" width="64" height="64" alt="ProofPGS icon">
 
 # ProofPGS
 
