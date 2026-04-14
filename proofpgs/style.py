@@ -40,7 +40,6 @@ _RESET = "\033[0m" if _use_color else ""
 # without switching to the bold font face on Windows Terminal; a 24-bit
 # FG paired with the bold parameter triggers the bold-font path reliably.
 _BOLD  = "\033[38;2;130;160;210;1m" if _use_color else ""
-_DIM_SGR = "\033[2m" if _use_color else ""
 
 _ERROR   = _fg(215,  95,  95)   # soft red
 _WARN    = _fg(220, 180,  90)   # soft amber
@@ -51,9 +50,6 @@ _DIM     = _fg(110, 110, 120)   # dim text
 # glyphs should still carry the bold font face.
 _DIM_BOLD = "\033[38;2;110;110;120;1m" if _use_color else ""
 _BORDER  = _fg(80,   85,  95)   # dark gray borders
-_HDR     = _fg(220, 140, 160)   # soft rose
-_SDR     = _fg(120, 190, 200)   # soft cyan
-_COMPARE = _fg(200, 180, 140)   # soft yellow
 
 
 # --- Semantic helpers ---
@@ -82,27 +78,9 @@ def bold(text):
 def dim_bold(text):
     return f"{_DIM_BOLD}{text}{_RESET}"
 
-_WHITE = "\033[38;2;255;255;255m" if _use_color else ""
-
-def badge_hdr(text):
-    return f"{_WHITE}{text}{_RESET}"
-
-def badge_sdr(text):
-    return f"{_WHITE}{text}{_RESET}"
-
-def badge_compare(text):
-    return f"{_COMPARE}{text}{_RESET}"
-
-def badge_unknown(text):
-    return f"{_DIM}{text}{_RESET}"
-
-def badge_mismatch(text):
-    return f"{_WARN}{text}{_RESET}"
-
 
 # --- Cursor control (always active on TTY, silent when piped) ---
 CURSOR_UP_CLEAR = "\033[A\033[K" if _is_tty else ""
-CLEAR_LINE      = "\033[K"       if _is_tty else ""
 
 
 # ---------------------------------------------------------------------------
@@ -117,8 +95,6 @@ _GLYPH_UNICODE = {
     "ok": "✓", "err": "✗",
     "dot": "•",
     "rule": "·",
-    "hdr": "◆",   # solid diamond — high dynamic range
-    "sdr": "◇",   # hollow diamond — standard dynamic range
     "warn": "⚠",  # warning sign — mismatch / caution
 }
 _GLYPH_ASCII = {
@@ -127,8 +103,6 @@ _GLYPH_ASCII = {
     "ok": "[ok]", "err": "[x]",
     "dot": "*",
     "rule": ".",
-    "hdr": "*",
-    "sdr": "-",
     "warn": "!",
 }
 _G = _GLYPH_UNICODE if _use_unicode else _GLYPH_ASCII
@@ -137,8 +111,8 @@ _G = _GLYPH_UNICODE if _use_unicode else _GLYPH_ASCII
 def glyph(name: str) -> str:
     """Return a glyph by name, respecting the Unicode/ASCII fallback.
 
-    Known names: ``dot`` (bullet separator), ``ok``, ``err``, and the
-    box-drawing primitives ``tl tr bl br h v``.
+    Known names: ``dot`` (bullet separator), ``rule``, ``warn``, ``ok``,
+    ``err``, and the box-drawing primitives ``tl tr bl br h v``.
     """
     return _G[name]
 
