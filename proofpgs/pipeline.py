@@ -297,18 +297,9 @@ def _print_track_listing(tracks, video_info=None):
     # Video stream header row (if known) + a blank row of breathing space.
     if video_info is not None:
         vs_text = f" {dim('Video stream:')} {video_range.upper()}"
+        vw = video_info.get("width") or 0
         vh = video_info.get("height") or 0
-        if vh >= 2160:
-            vs_label = "4K"
-        elif vh >= 1080:
-            vs_label = "1080p"
-        elif vh >= 720:
-            vs_label = "720p"
-        elif vh > 0:
-            vw = video_info.get("width") or 0
-            vs_label = f"{vw}\u00d7{vh}"
-        else:
-            vs_label = None
+        vs_label = f"{vw}\u00d7{vh}" if vw and vh else None
         if vs_label:
             vs_text += f" ({vs_label})"
         if any_mismatch:
