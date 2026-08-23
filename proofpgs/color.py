@@ -59,7 +59,7 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     Cb = vals[:, 2]
     A  = vals[:, 3]
 
-    # --- Step 1: BT.2020 YCbCr (limited range) -> R'G'B' (PQ encoded, 0..1) ---
+    # Step 1: BT.2020 YCbCr (limited range) -> R'G'B' (PQ encoded, 0..1)
     # BD/UHD BD uses limited-range YCbCr: Y 16-235 (219 levels),
     # Cb/Cr 16-240 (224 levels, centred at 128).
     Yn  = (Y  - 16.0) / 219.0
@@ -70,13 +70,12 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     G_pq = np.clip(Yn - 0.1645  * Cbn - 0.5713 * Crn,           0.0, 1.0)
     B_pq = np.clip(Yn + 1.8814  * Cbn,                          0.0, 1.0)
 
-    # --- Step 2: PQ EOTF -> linear light (0..1, where 1.0 = 10,000 nits) ---
+    # Step 2: PQ EOTF -> linear light (0..1, where 1.0 = 10,000 nits)
     R_lin = pq_eotf(R_pq)
     G_lin = pq_eotf(G_pq)
     B_lin = pq_eotf(B_pq)
 
-    # --- Step 3: BT.2020 -> BT.709 primary conversion ---
-    # Stack into (N, 3) for matrix multiply
+    # Step 3: BT.2020 -> BT.709 primary conversion
     rgb_2020 = np.stack([R_lin, G_lin, B_lin], axis=1)  # (N, 3)
     rgb_709  = rgb_2020 @ BT2020_TO_BT709.T              # (N, 3)
 
@@ -84,7 +83,7 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     G_709 = rgb_709[:, 1]
     B_709 = rgb_709[:, 2]
 
-    # --- Step 4: Tonemap HDR -> SDR ---
+    # Step 4: Tonemap HDR -> SDR
     # Normalise so that the UHD BD reference white (203 nits) maps to SDR 1.0.
     # 203 nits / 10,000 nits = 0.0203
     REF_WHITE = 203.0 / 10000.0
@@ -93,7 +92,6 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
     B_709 /= REF_WHITE
 
     if tonemap == "reinhard":
-        # Per-channel Reinhard on the BT.709 signal
         R_709 = np.maximum(R_709, 0.0)
         G_709 = np.maximum(G_709, 0.0)
         B_709 = np.maximum(B_709, 0.0)
@@ -101,14 +99,14 @@ def decode_palette_hdr(entries: dict, tonemap: str) -> np.ndarray:
         G_709 = G_709 / (1.0 + G_709)
         B_709 = B_709 / (1.0 + B_709)
     else:
-        # Hard clip — preserves colour accuracy for values under 203 nits,
-        # clips anything brighter. Good for subtitles that sit at or below
-        # reference white.
+        # Hard clip, preserving colour accuracy for values under 203 nits
+        # and clipping anything brighter. Good for subtitles that sit at
+        # or below reference white.
         R_709 = np.clip(R_709, 0.0, 1.0)
         G_709 = np.clip(G_709, 0.0, 1.0)
         B_709 = np.clip(B_709, 0.0, 1.0)
 
-    # --- Step 5: sRGB gamma encoding ---
+    # Step 5: sRGB gamma encoding
     R_out = np.clip(np.round(srgb_gamma(R_709) * 255.0), 0, 255).astype(np.uint8)
     G_out = np.clip(np.round(srgb_gamma(G_709) * 255.0), 0, 255).astype(np.uint8)
     B_out = np.clip(np.round(srgb_gamma(B_709) * 255.0), 0, 255).astype(np.uint8)
@@ -144,7 +142,6 @@ def decode_palette_sdr(entries: dict) -> np.ndarray:
     Cb = vals[:, 2]
     A  = vals[:, 3]
 
-    # BT.709 limited-range YCbCr -> R'G'B' (already gamma-encoded)
     # BD uses limited-range: Y 16-235 (219 levels), Cb/Cr 16-240 (224 levels).
     Yn  = (Y  - 16.0) / 219.0
     Crn = (Cr - 128.0) / 224.0

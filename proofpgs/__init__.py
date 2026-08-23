@@ -1,4 +1,4 @@
-"""ProofPGS — PGS subtitle decoder with HDR (UHD BD) and SDR (BD) support."""
+"""ProofPGS, a PGS subtitle decoder with HDR (UHD BD) and SDR (BD) support."""
 
 __version__ = "1.7.3"
 

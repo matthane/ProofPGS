@@ -2,7 +2,7 @@
 
 # ProofPGS
 
-A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles. Validates PGS tracks with per-track SDR/HDR detection and can export each subtitle as a PNG using the correct colour pipeline — **HDR** (UHD Blu-ray, BT.2020 + PQ) or **SDR** (standard Blu-ray, BT.709).
+A tool for inspecting and exporting PGS (Presentation Graphic Stream) subtitles. Validates PGS tracks with per-track SDR/HDR detection and can export each subtitle as a PNG using the correct colour pipeline, either **HDR** (UHD Blu-ray, BT.2020 + PQ) or **SDR** (standard Blu-ray, BT.709).
 
 Accepts `.sup` files directly, or video containers (MKV, MK3D, M2TS) from which PGS subtitle tracks are automatically discovered and extracted via [libpgs](https://github.com/matthane/libpgs).
 
@@ -32,11 +32,11 @@ If you prefer to run from a git clone, you'll need to provide the [libpgs](https
 
 ### Optional dependency
 
-- [FFmpeg](https://ffmpeg.org/) — only needed for the video stream dynamic range mismatch badge. If ffprobe is not on PATH, this feature is silently skipped.
+- [FFmpeg](https://ffmpeg.org/), needed only for the video stream dynamic range mismatch badge. If ffprobe is not on PATH, this feature is silently skipped.
 
 ## Quick Start
 
-Just point ProofPGS at any video file or `.sup` file:
+Point ProofPGS at any video file or `.sup` file:
 
 ```bash
 proofpgs movie.mkv
@@ -73,7 +73,7 @@ proofpgs movie.mkv --out ./my_output
 
 ### Extract a specific time range
 
-Use `--start` and `--end` to extract subtitles from a specific portion of the file. libpgs seeks directly to the target offset — data before the start point is not read.
+Use `--start` and `--end` to extract subtitles from a specific portion of the file. libpgs seeks directly to the target offset, so data before the start point is not read.
 
 ```bash
 # Subtitles from 5 minutes onward:
@@ -92,12 +92,12 @@ Timestamps accept `HH:MM:SS.ms`, `MM:SS.ms`, `SS.ms`, or plain seconds (e.g. `30
 
 ProofPGS has six output modes:
 
-- **`auto`** (default) — Automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes each track with the correct pipeline independently. A container with mixed SDR and HDR tracks will process each track using its own detected color space. Falls back to `compare` for any individual track where detection is inconclusive.
-- **`compare`** — For delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
-- **`hdr`** — Direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
-- **`sdr`** — Direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
-- **`validate`** — Analyzes all tracks without a time limit (with scan progress) and displays track information and SDR/HDR detection results without producing any output. Useful for thoroughly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, including sparse tracks that may be skipped during normal interactive analysis.
-- **`validate-fast`** — Runs the same analysis as `validate` but under the normal 10-second wallclock budget. Sparse tracks that can't be analyzed in time are flagged, and you're prompted to re-analyze them without a time limit if desired. Useful for a quick check when a full unbounded scan isn't needed.
+- `auto` (default): automatically detects whether each subtitle track was mastered for SDR or HDR by analyzing palette data, then decodes each track with the correct pipeline independently. A container with mixed SDR and HDR tracks will process each track using its own detected color space. Falls back to `compare` for any individual track where detection is inconclusive.
+- `compare`: for delivery proofing. Produces an annotated PNG with a dark background showing the SDR and HDR decodes side by side, labelled for easy comparison. These are opaque RGB images meant for visual review.
+- `hdr`: direct export. Outputs the HDR (BT.2020+PQ) decode as a transparent PNG, cropped to content. Useful when you need the subtitle graphic itself.
+- `sdr`: direct export. Outputs the SDR (BT.709) decode as a transparent PNG, cropped to content.
+- `validate`: analyzes all tracks without a time limit (with scan progress) and displays track information and SDR/HDR detection results without producing any output. Useful for thoroughly checking what PGS tracks a file contains and whether they are mastered for SDR or HDR, including sparse tracks that may be skipped during normal interactive analysis.
+- `validate-fast`: runs the same analysis as `validate` but under the normal 10-second wallclock budget. Sparse tracks that can't be analyzed in time are flagged, and you're prompted to re-analyze them without a time limit if desired. Useful for a quick check when a full unbounded scan isn't needed.
 
 ```bash
 # Auto-detect color space and decode accordingly (default):
@@ -106,10 +106,10 @@ proofpgs input.sup
 # Force side-by-side comparison:
 proofpgs input.sup --mode compare
 
-# Direct export — transparent HDR-decoded PNGs:
+# Direct export, transparent HDR-decoded PNGs:
 proofpgs input.sup --mode hdr
 
-# Direct export — transparent SDR-decoded PNGs:
+# Direct export, transparent SDR-decoded PNGs:
 proofpgs input.sup --mode sdr
 
 # Show track info and detection only (no output):
@@ -132,8 +132,8 @@ proofpgs movie.mkv --mode validate-fast
 | `--tracks` | e.g. `1,3,4` or `all` | interactive | Which PGS tracks to process (1-based, container input only). |
 | `--nocrop` | flag | off | Output full video-frame-sized PNGs instead of cropping to subtitle content. |
 | `--threads` | integer | auto (up to 8) | Number of parallel rendering threads. |
-| `--install` | flag | — | Register file manager context menu entries for all supported file types. |
-| `--uninstall` | flag | — | Remove file manager context menu entries. |
+| `--install` | flag | n/a | Register file manager context menu entries for all supported file types. |
+| `--uninstall` | flag | n/a | Remove file manager context menu entries. |
 
 ## File Manager Integration
 
@@ -170,15 +170,15 @@ movie_pgs_output/
     ...
 ```
 
-The output folder is named after the input file (e.g. `movie.mkv` → `movie_pgs_output/`). The range suffix (`_sdr`, `_hdr`, or `_compare`) indicates which color pipeline was used to decode the subtitle.
+The output folder is named after the input file (e.g. `movie.mkv` becomes `movie_pgs_output/`). The range suffix (`_sdr`, `_hdr`, or `_compare`) indicates which color pipeline was used to decode the subtitle.
 
 For `.sup` input (single track), images are written directly to the output directory without a track subfolder.
 
 ## How SDR/HDR Detection Works
 
-ProofPGS classifies each track by analysing the **subtitle's own palette colours**, not the video stream's metadata — subtitle tracks can come from different sources than the video, so the video's range is not a reliable signal. The core check is a **PQ plausibility test**: every visible palette entry is decoded under the HDR (BT.2020 + PQ) interpretation, where the 0–1 colour range maps onto 0–10,000 nits. Real HDR subtitles are authored near the 203-nit reference white, so if the brightest entry implies more than ~1000 nits under PQ, the HDR interpretation is implausible and the track is SDR. This is especially decisive for coloured text — SDR gold at Y≈178 decodes to a value that would mean ~4800 nits under PQ, obviously not real HDR.
+ProofPGS classifies each track by analysing the **subtitle's own palette colours**, not the video stream's metadata. Subtitle tracks can come from different sources than the video, so the video's range is not a reliable signal. The core check is a **PQ plausibility test**. Every visible palette entry is decoded under the HDR (BT.2020 + PQ) interpretation, where the 0-1 colour range maps onto 0-10,000 nits. Real HDR subtitles are authored near the 203-nit reference white, so if the brightest entry implies more than ~1000 nits under PQ, the HDR interpretation is implausible and the track is SDR. This is especially decisive for coloured text, where SDR gold at Y~178 decodes to a value that would mean ~4800 nits under PQ, obviously not real HDR.
 
-When the PQ test is ambiguous, ProofPGS falls back to Y-value thresholds (SDR white sits at Y=235, HDR reference white at Y=143) and prefers achromatic entries when available, since white/gray decodes the same under either colour matrix. Two filters keep the detector honest: invisible entries (alpha below ~12.5%) are skipped to ignore fade-in palettes, and "ghost" palette entries that no pixel references are excluded so a single unrendered entry can't flip the verdict. Detection runs **per track**, so a container with mixed SDR and HDR subtitles decodes each one with the correct pipeline; only genuinely inconclusive tracks fall back to `compare` mode.
+When the PQ test is ambiguous, ProofPGS falls back to Y-value thresholds (SDR white sits at Y=235, HDR reference white at Y=143) and prefers achromatic entries when available, since white/gray decodes the same under either colour matrix. Two filters keep the detector honest: invisible entries (alpha below ~12.5%) are skipped to ignore fade-in palettes, and "ghost" palette entries that no pixel references are excluded so a single unrendered entry can't flip the verdict. Detection runs **per track**, so a container with mixed SDR and HDR subtitles decodes each one with the correct pipeline. Only genuinely inconclusive tracks fall back to `compare` mode.
 
 ## Colour Pipeline
 
@@ -203,7 +203,7 @@ BT.709 YCbCr (limited range)  ->  BT.709 matrix  ->  BT.1886 linearise (gamma 2.
 
 ## Performance
 
-All file I/O is handled by [libpgs](https://github.com/matthane/libpgs), a high-performance Rust tool purpose-built for PGS segment extraction. libpgs streams decoded display sets over a subprocess pipe — no temp files, no intermediate formats. For MKV files with a Cues index, libpgs seeks directly to subtitle data, reading only a few MB out of tens of GB for large UHD remuxes.
+All file I/O is handled by [libpgs](https://github.com/matthane/libpgs), a Rust tool built for PGS segment extraction. libpgs streams decoded display sets over a subprocess pipe, with no temp files and no intermediate formats. For MKV files with a Cues index, libpgs seeks directly to subtitle data, reading only a few MB out of tens of GB for large UHD remuxes.
 
 PNG rendering uses multiple threads by default (up to 8, override with `--threads`).
 
@@ -235,7 +235,7 @@ LICENSES/
 
 ## Build Provenance
 
-Release archives are built entirely in GitHub Actions from auditable source code — no locally-built binaries are uploaded. The libpgs binary included in each release is compiled from the [libpgs source](https://github.com/matthane/libpgs) at its latest tagged release using `cargo build --release` on each platform's native CI runner.
+Release archives are built entirely in GitHub Actions from auditable source code, so no locally-built binaries are uploaded. The libpgs binary included in each release is compiled from the [libpgs source](https://github.com/matthane/libpgs) at its latest tagged release using `cargo build --release` on each platform's native CI runner.
 
 Every release archive includes a `BUILD_INFO.txt` with the exact libpgs tag, commit hash, build target, and a link to the workflow run log. Release artifacts are signed with [Sigstore](https://www.sigstore.dev/) artifact attestations, cryptographically linking each archive to the GitHub Actions workflow and source commit that produced it.
 

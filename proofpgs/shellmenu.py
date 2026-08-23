@@ -24,7 +24,7 @@ _SUBMENU_CONTAINER = "ProofPGS.ContainerMenu"
 # (registry_name, display_label, mode_value, use_pause)
 # use_pause: validate exits immediately so needs & pause to keep the window open
 # Labels use a single '&'.  Windows registry MUIVerb requires '&&' for a
-# literal ampersand — _win_label() doubles them at write time.
+# literal ampersand. _win_label() doubles them at write time.
 _COMMON_MODES = [
     ("01_auto",     "Auto export (detect color space)",      "auto",     False),
     ("02_compare",  "Compare (SDR & HDR side-by-side)",      "compare",  False),
@@ -32,7 +32,7 @@ _COMMON_MODES = [
     ("04_sdr",      "Export as SDR (BT.709)",                "sdr",      False),
 ]
 
-# .sup files are parsed directly — no FFmpeg analysis budget, single track
+# .sup files are parsed directly (no FFmpeg analysis budget, single track)
 _SUP_MODES = _COMMON_MODES + [
     ("05_validate", "Validate", "validate", True),
 ]
@@ -57,9 +57,7 @@ _CONTAINER_UTIS = ["org.matroska.mkv", "public.mpeg-2-transport-stream"]
 _SUP_UTIS = ["public.data"]  # .sup has no registered UTI; filter by extension in script
 
 
-# ---------------------------------------------------------------------------
 # Shared helpers
-# ---------------------------------------------------------------------------
 
 def _all_extensions():
     """Return sorted list of all supported file extensions."""
@@ -81,8 +79,8 @@ def _print_install_box(title: str, sup_exts, container_exts,
     """Render a framed summary of what was just installed.
 
     The framed portion lists registered extensions and the installed
-    modes.  *post_lines* are reference lines (paths, platform notes)
-    printed *below* the box — where long file paths can run to their
+    modes.  post_lines are reference lines (paths, platform notes)
+    printed below the box, where long file paths can run to their
     natural length without being clipped by the box width.
     """
     print(box_top(title))
@@ -131,9 +129,7 @@ def _resolve_install_paths() -> dict:
     return {"python_exe": python_exe, "project_dir": _project_root()}
 
 
-# ---------------------------------------------------------------------------
-# Public API — platform dispatch
-# ---------------------------------------------------------------------------
+# Public API - platform dispatch
 
 def install():
     """Register file manager context menu entries for ProofPGS."""
@@ -167,9 +163,7 @@ def uninstall():
         sys.exit(1)
 
 
-# ===================================================================
-# Windows — Explorer context menu via registry
-# ===================================================================
+# Windows - Explorer context menu via registry
 
 def _icon_path_windows() -> str:
     """Return the icon path matching the current Windows theme."""
@@ -241,7 +235,6 @@ def _clean_empty_parents(root, subkey: str):
         path = "\\".join(parts)
         try:
             hkey = winreg.OpenKey(root, path, 0, winreg.KEY_READ)
-            # Check if it has any subkeys or values
             info = winreg.QueryInfoKey(hkey)
             winreg.CloseKey(hkey)
             if info[0] == 0 and info[1] == 0:
@@ -262,7 +255,7 @@ def _install_windows():
     sup_exts = sorted(SUP_EXTENSIONS)
     container_exts = sorted(CONTAINER_EXTENSIONS)
 
-    # --- Create submenu commands for each extension group ---
+    # Create submenu commands for each extension group.
     for submenu_key, modes in [(_SUBMENU_SUP, _SUP_MODES),
                                 (_SUBMENU_CONTAINER, _CONTAINER_MODES)]:
         submenu_shell = f"Software\\Classes\\{submenu_key}\\shell"
@@ -276,7 +269,7 @@ def _install_windows():
             with winreg.CreateKey(winreg.HKEY_CURRENT_USER, cmd_path) as key:
                 winreg.SetValue(key, "", winreg.REG_SZ, command)
 
-    # --- Register per-extension shell verb ---
+    # Register per-extension shell verb.
     icon = _icon_path_windows()
     for ext, submenu_key in ([(e, _SUBMENU_SUP) for e in sup_exts] +
                               [(e, _SUBMENU_CONTAINER) for e in container_exts]):
@@ -310,24 +303,22 @@ def _uninstall_windows():
 
     removed = 0
 
-    # --- Remove shared submenus ---
     for submenu_key in (_SUBMENU_SUP, _SUBMENU_CONTAINER):
         submenu_path = f"Software\\Classes\\{submenu_key}"
         if _delete_key_tree(winreg.HKEY_CURRENT_USER, submenu_path):
             removed += 1
 
-    # --- Clean up legacy single submenu from older installs ---
+    # Clean up legacy single submenu from older installs.
     legacy_path = "Software\\Classes\\ProofPGS.SubMenu"
     if _delete_key_tree(winreg.HKEY_CURRENT_USER, legacy_path):
         removed += 1
 
-    # --- Remove per-extension verbs ---
+    # Remove per-extension verbs.
     for ext in _all_extensions():
         verb_path = (f"Software\\Classes\\SystemFileAssociations"
                      f"\\{ext}\\shell\\{_MENU_NAME}")
         if _delete_key_tree(winreg.HKEY_CURRENT_USER, verb_path):
             removed += 1
-            # Clean up empty parent keys left behind
             shell_path = (f"Software\\Classes\\SystemFileAssociations"
                           f"\\{ext}\\shell")
             _clean_empty_parents(winreg.HKEY_CURRENT_USER, shell_path)
@@ -342,9 +333,7 @@ def _uninstall_windows():
         print("No ProofPGS context menu entries found.")
 
 
-# ===================================================================
-# Linux — freedesktop .desktop files
-# ===================================================================
+# Linux - freedesktop .desktop files
 
 def _desktop_dir() -> Path:
     """Return ~/.local/share/applications/."""
@@ -417,14 +406,13 @@ def _install_linux():
     desktop_d = _desktop_dir()
     desktop_d.mkdir(parents=True, exist_ok=True)
 
-    # --- Install custom MIME type for .sup ---
     mime_d = _mime_packages_dir()
     mime_d.mkdir(parents=True, exist_ok=True)
     (mime_d / "proofpgs-sup.xml").write_text(_SUP_MIME_XML, encoding="utf-8")
     _run_quiet(["update-mime-database",
                 str(Path.home() / ".local" / "share" / "mime")])
 
-    # --- Write .desktop files ---
+    # Write .desktop files.
     written = []
     for group, modes, mime in [("sup", _SUP_MODES, _SUP_MIME_TYPES),
                                 ("container", _CONTAINER_MODES, _CONTAINER_MIME_TYPES)]:
@@ -455,12 +443,10 @@ def _uninstall_linux():
     desktop_d = _desktop_dir()
     removed = 0
 
-    # Remove .desktop files
     for f in desktop_d.glob("proofpgs-*.desktop"):
         f.unlink(missing_ok=True)
         removed += 1
 
-    # Remove custom MIME type
     mime_xml = _mime_packages_dir() / "proofpgs-sup.xml"
     if mime_xml.exists():
         mime_xml.unlink()
@@ -476,9 +462,7 @@ def _uninstall_linux():
         print("No ProofPGS context menu entries found.")
 
 
-# ===================================================================
-# macOS — Finder Quick Actions via Automator .workflow bundles
-# ===================================================================
+# macOS - Finder Quick Actions via Automator .workflow bundles
 
 def _services_dir() -> Path:
     """Return ~/Library/Services/."""
@@ -555,7 +539,6 @@ def _document_wflow(shell_script: str, utis: list[str]) -> str:
     uti_entries = "\n".join(
         f"\t\t\t\t\t\t\t<string>{u}</string>" for u in utis
     )
-    # Escape XML special characters in the shell script
     escaped_script = (shell_script
                       .replace("&", "&amp;")
                       .replace("<", "&lt;")
@@ -699,11 +682,9 @@ def _install_macos():
             workflow_dir = services_d / f"{workflow_name}.workflow" / "Contents"
             workflow_dir.mkdir(parents=True, exist_ok=True)
 
-            # Info.plist
             (workflow_dir / "Info.plist").write_text(
                 _info_plist(f"ProofPGS - {label}"), encoding="utf-8")
 
-            # Shell script + document.wflow
             script = _build_shell_script_macos(
                 mode, extensions, **paths)
             (workflow_dir / "document.wflow").write_text(
@@ -711,7 +692,6 @@ def _install_macos():
 
             written.append(workflow_name)
 
-    # Refresh the Services menu
     _run_quiet(["/System/Library/CoreServices/pbs", "-update"])
 
     pip_installed = "proofpgs_exe" in paths
@@ -735,7 +715,6 @@ def _uninstall_macos():
     removed = 0
 
     for workflow in services_d.glob("ProofPGS - *.workflow"):
-        # Remove the entire .workflow bundle (directory tree)
         shutil.rmtree(workflow, ignore_errors=True)
         removed += 1
 

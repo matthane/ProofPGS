@@ -36,7 +36,6 @@ def _track_label(track: dict) -> str:
 
 
 def _resolve_auto_mode(detection: dict) -> str:
-    """Resolve 'auto' mode using a detection result. Returns resolved mode."""
     if detection["verdict"] is not None:
         return detection["verdict"]
     return "compare"
@@ -44,7 +43,7 @@ def _resolve_auto_mode(detection: dict) -> str:
 
 def _fmt_mode(mode: str) -> str:
     """Format a mode name for display: HDR/SDR stay uppercase (acronyms),
-    other modes are capitalized (``compare`` → ``Compare``)."""
+    other modes are capitalized (``compare`` -> ``Compare``)."""
     return mode.upper() if mode in ("hdr", "sdr") else mode.capitalize()
 
 
@@ -60,10 +59,6 @@ def _build_track_tags(tracks, selected_indices):
     return tags
 
 
-# ---------------------------------------------------------------------------
-# Analysis helpers
-# ---------------------------------------------------------------------------
-
 def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                     preview_cache, budget=None, has_cues=True,
                     reuse_proc=None, reuse_tracks=None):
@@ -74,13 +69,13 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
     detection becomes conclusive and *has_cues* is True, a short grace
     period allows co-located language tracks at the same timestamps to
     also conclude before restarting libpgs with only the remaining
-    tracks — letting it use MKV Cues to skip past already-validated
+    tracks, letting it use MKV Cues to skip past already-validated
     data.  When *has_cues* is False, restarts are disabled and all
     tracks are streamed in a single pass.
 
     When *reuse_proc* is provided (a running libpgs subprocess whose
     tracks header has already been consumed), it is used for the first
-    pass — avoiding a redundant full read on slow sources.
+    pass, avoiding a redundant full read on slow sources.
 
     Updates each track dict in-place with:
       detection, analysis_bailed
@@ -91,7 +86,6 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
 
     num_tracks = len(track_indices)
 
-    # Live elapsed-time display on the "Analyzing" line.
     _timer_stop = threading.Event()
     _timer_t0 = time.monotonic()
     _is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -114,7 +108,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 print(f"\r{_timer_label[0]} {dim(f'{e:.0f}s')}", end="", flush=True)
 
     print()
-    # Only announce the fallback path — the cues-available happy path is
+    # Only announce the fallback path. The cues-available happy path stays
     # silent so the track listing dominates the output.
     if not has_cues:
         if budget:
@@ -164,7 +158,7 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                 return False
 
             # On the first pass, reuse the discover_tracks process if
-            # provided — avoids re-reading from the start on slow I/O.
+            # provided, to avoid re-reading from the start on slow I/O.
             _extra = {}
             if reuse_proc is not None:
                 _extra["existing_proc"] = reuse_proc
@@ -191,38 +185,33 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                       f"ds_counts={ds_counts} ({elapsed:.2f}s elapsed)",
                       flush=True)
 
-            # Merge new data into accumulator.
             for tid, ds in track_data.items():
                 all_data.setdefault(tid, []).extend(ds)
 
-            # Remove validated tracks from remaining.
             remaining_tids = [tid for tid in remaining_tids
                               if tid not in concluded]
 
-            # If no tracks concluded in this pass and we have remaining
-            # tracks, they likely have no data yet — stop to avoid an
-            # infinite loop (they'll be marked as bailed below).
+            # No tracks concluded and some remain: they likely have no data
+            # yet. Stop to avoid an infinite loop (marked bailed below).
             if not done_tids and remaining_tids:
                 if _debug:
                     print(f"  [DEBUG] No tracks concluded in pass "
                           f"{_pass_num}, {len(remaining_tids)} "
-                          f"remaining — bailing", flush=True)
+                          f"remaining, bailing", flush=True)
                 break
 
-        # --- Post-loop: assign detection results and cache data ---
+        # Post-loop: assign detection results and cache data.
         for ti in track_indices:
             t = tracks[ti]
             tid = t["track_id"]
             ds = all_data.get(tid, [])
 
-            # Cap to ANALYSIS_MAX_DS display sets.
             if len(ds) > ANALYSIS_MAX_DS:
                 ds = ds[:ANALYSIS_MAX_DS]
 
             preview_cache[ti] = ds
             content_count = sum(1 for d in ds if ds_has_content(d))
 
-            # Use cached detection if available, otherwise run fresh.
             if tid in concluded:
                 t["detection"] = concluded[tid]
             elif ds:
@@ -234,10 +223,9 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                     "max_pq_channel": 0, "num_palettes": 0,
                 }
 
-            # Composition size — read from the first display set with a
-            # valid composition. Per UHD BD spec, the graphics plane is
-            # fixed at 1920x1080 for the whole track, so the first is
-            # representative.
+            # Composition size: taken from the first valid composition. Per
+            # UHD BD spec, the graphics plane is fixed at 1920x1080 for the
+            # whole track, so the first display set is representative.
             for d in ds:
                 comp = d.get("composition")
                 if comp is not None:
@@ -245,13 +233,12 @@ def _analyze_tracks(tracks, track_indices, libpgs_path, input_path,
                                              comp["video_height"])
                     break
 
-            # --- Bail-out ---
             t["analysis_bailed"] = (
                 content_count == 0 and t["detection"]["verdict"] is None
             )
 
     finally:
-        # Always stop the timer — including on KeyboardInterrupt.
+        # Always stop the timer, including on KeyboardInterrupt.
         _timer_stop.set()
         try:
             _timer_thread.join(timeout=1)
@@ -278,12 +265,10 @@ def _print_track_listing(tracks, video_info=None):
 
     video_range = video_info["range"] if video_info else None
 
-    # Determine index-column width so `[1]` / `[10]` stay aligned.
     idx_w = max(len(f"[{ti}]") for ti in range(1, len(tracks) + 1))
 
     lines = ["", box_top()]
 
-    # Pre-check whether any track has a dynamic range mismatch.
     any_mismatch = (
         video_range is not None
         and any(
@@ -294,7 +279,6 @@ def _print_track_listing(tracks, video_info=None):
         )
     )
 
-    # Video stream header row (if known) + a blank row of breathing space.
     if video_info is not None:
         vs_text = f" {dim('Video stream:')} {video_range.upper()}"
         vw = video_info.get("width") or 0
@@ -310,7 +294,6 @@ def _print_track_listing(tracks, video_info=None):
     for ti, t in enumerate(tracks):
         det = t.get("detection", {})
 
-        # Does this track's range differ from the video stream?
         is_mismatch = (
             video_range is not None
             and not t.get("analysis_bailed")
@@ -318,7 +301,7 @@ def _print_track_listing(tracks, video_info=None):
             and det["verdict"] != video_range
         )
 
-        # --- First row: [i]  HDR/SDR • Language • "Title" [flags] ---
+        # First row: index, HDR/SDR badge, language, title, flags.
         idx_raw = f"[{ti + 1}]".ljust(idx_w)
 
         detail_parts = []
@@ -354,7 +337,7 @@ def _print_track_listing(tracks, video_info=None):
             identity = f" {bold(idx_raw)}  {detail}"
         lines.append(box_row(identity))
 
-        # --- Second row: stream N • ~N subs ---
+        # Second row: stream number, subtitle count, resolution, indexed flag.
         attr_indent = " " + (" " * idx_w) + "  "
         attr_parts = [dim(f"stream {t['index']}")]
 
@@ -384,14 +367,13 @@ def _print_track_listing(tracks, video_info=None):
         if ti < len(tracks) - 1:
             lines.append(box_sep())
 
-    # Footer: ProofPGS vX.Y.Z right-aligned.  Name is bold+dim, version
-    # stays plain dim so the brand label reads a touch stronger than the
-    # version suffix without pulling attention from the track list above.
+    # Footer: name is bold+dim, version stays plain dim so the brand reads
+    # stronger without pulling attention from the track list above.
     from . import __version__
     version_str = f"v{__version__}"
     footer_plain = f"ProofPGS {version_str}"
     footer_styled = f"{dim_bold('ProofPGS')} {dim(version_str)}"
-    inner = BOX_WIDTH - 4  # content area width inside "│ " ... " │"
+    inner = BOX_WIDTH - 4  # content area width inside the box border
     lead = " " * max(0, inner - len(footer_plain))
     lines.append(box_blank())
     lines.append(box_row(lead + footer_styled))
@@ -408,10 +390,6 @@ def _print_track_listing(tracks, video_info=None):
 
     return has_bailed
 
-
-# ---------------------------------------------------------------------------
-# Batch extraction (single-pass, no cues)
-# ---------------------------------------------------------------------------
 
 def _batch_extract_no_cues(libpgs_path, input_path, selected_indices,
                            tracks, track_modes, track_tags, tonemap,
@@ -501,8 +479,6 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
 
     Returns total images saved across all tracks.
     """
-    # Partition: tracks with sufficient cache vs those needing streaming.
-    # When a time range is active, cache is from the wrong range — stream all.
     cached_indices = []
     stream_indices = []
     if start or end:
@@ -519,15 +495,14 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
     results = {}  # ti -> saved count
     consumer_threads = []
 
-    # --- Stream tracks via libpgs ---
+    # Stream tracks via libpgs.
     mark_done = None
     if stream_indices:
         track_ids = [tracks[ti]["track_id"] for ti in stream_indices]
 
-        # Progressive multi-pass: when cues are available and multiple
-        # tracks need streaming, restart libpgs with fewer tracks as
-        # each fills its quota — avoids seeking through completed
-        # tracks' cue entries, dramatically speeding up sparse tracks.
+        # Progressive multi-pass: restart libpgs with fewer tracks as each
+        # fills its quota, avoiding seeks through completed tracks' cue
+        # entries.
         if has_cues and len(stream_indices) > 1:
             try:
                 iterators, reader, mark_done = \
@@ -576,7 +551,7 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
             t.start()
             consumer_threads.append(t)
 
-    # --- Cached tracks: render from analysis cache in parallel ---
+    # Cached tracks: render from analysis cache in parallel.
     for ti in cached_indices:
         track = tracks[ti]
         folder_name = build_track_folder_name(ti, track)
@@ -617,10 +592,6 @@ def _batch_extract_with_limit(libpgs_path, input_path, selected_indices,
     return total
 
 
-# ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
-
 def process_sup_file(sup_path: str, out_dir: str, mode: str,
                      tonemap: str, first, nocrop: bool,
                      libpgs_path: str = None,
@@ -636,10 +607,10 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     def _on_header(hdr):
         manifest.update(hdr)
 
-    # Phase 1: Analysis — cap at ANALYSIS_MAX_DS content display sets
+    # Phase 1: analysis, capped at ANALYSIS_MAX_DS content display sets
     # (matches container behavior; libpgs exits the pipe early). Request
-    # the manifest header so we get the total display-set count from
-    # libpgs's cheap pre-scan rather than having to stream the whole file.
+    # the manifest header for the total display-set count from libpgs's
+    # cheap pre-scan, avoiding a full stream of the file.
     analysis_ds = list(stream_file(libpgs_path, sup_path,
                                    start=start, end=end,
                                    max_ds=ANALYSIS_MAX_DS,
@@ -649,10 +620,9 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     detection = detect_from_palettes(analysis_ds)
     v = detection["verdict"]
 
-    # Totals come from the manifest pre-scan. If the libpgs binary is too
-    # old to emit the header, fall back to streaming the full file once
-    # for the count — and reuse that list for rendering so we only pay
-    # for one full read.
+    # Totals come from the manifest pre-scan. If libpgs is too old to emit
+    # the header, stream the full file once for the count and reuse that
+    # list for rendering, paying for one full read only.
     full_ds = None
     if manifest.get("total_content_display_sets") is not None:
         total = manifest["total_content_display_sets"]
@@ -663,7 +633,6 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
         total = sum(1 for ds in full_ds if ds_has_content(ds))
         total_all = len(full_ds)
 
-    # Detection label for the box row
     if v == "hdr":
         det_label = "HDR"
     elif v == "sdr":
@@ -678,7 +647,6 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     sep = f"  {dim(glyph('dot'))}  "
     summary_row = f" {det_label}{sep}{count_desc}"
 
-    # Version footer (same pattern as _print_track_listing)
     from . import __version__
     version_str = f"v{__version__}"
     footer_plain = f"ProofPGS {version_str}"
@@ -697,7 +665,6 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
     if mode in ("validate", "validate-fast"):
         return 0
 
-    # --- Interactive count prompt (top-level .sup invocations only) ---
     if interactive and first is None and sys.stdin.isatty():
         first = select_count_interactive_sup(total)
         print()
@@ -717,9 +684,9 @@ def process_sup_file(sup_path: str, out_dir: str, mode: str,
         print(f"{bold('Mode:')} {_fmt_mode(mode)}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     print()
 
-    # Phase 2: Render — reuse the analysis cache when it already holds
-    # enough content, otherwise stream fresh. If we had to fall back to a
-    # full pre-scan (old libpgs binary), reuse that list directly.
+    # Phase 2: render, reusing the analysis cache when it already holds
+    # enough content, otherwise streaming fresh. Reuse the full pre-scan
+    # directly if the libpgs binary was too old to emit the header.
     analysis_content = sum(1 for ds in analysis_ds if ds_has_content(ds))
     if full_ds is not None:
         render_ds = full_ds
@@ -745,13 +712,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
                       end: str = None) -> None:
     """Extract and decode PGS tracks from a video container.
 
-    All extraction is performed via libpgs streaming — no temp files.
+    All extraction is performed via libpgs streaming, with no temp files.
     When a display-set limit is active (--first or interactive default),
     the libpgs pipe is closed early once enough display sets are collected.
     """
-    # === Phase 1: Discover tracks via libpgs ===
-    # When a time range is active, the discovery process (starting at
-    # byte 0) can't be reused for targeted extraction — disable keep_alive.
+    # Phase 1: discover tracks via libpgs.
+    # When a time range is active, the discovery process (starting at byte
+    # 0) can't be reused for targeted extraction, so keep_alive is disabled.
     _keep_alive = start is None
     if _keep_alive:
         raw_tracks, kept_proc = discover_tracks(libpgs_path, input_path,
@@ -765,15 +732,13 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print(warn("No PGS subtitle tracks found."))
         return
 
-    # Build track dicts from libpgs metadata.
     # has_cues: if any track lacks cues, disable multi-pass restart
     # (restarts without cues re-read from the beginning).
     has_cues = all(t.get("indexed") is True for t in raw_tracks)
 
-    # For files with Cues, we don't need the discover process — a fresh
-    # libpgs invocation with specific track IDs can seek efficiently.
-    # For files without Cues, reuse the process to avoid re-reading
-    # from the start (which can take seconds over NAS).
+    # With Cues, a fresh libpgs invocation can seek efficiently, so the
+    # discover process isn't needed. Without Cues, reuse it to avoid
+    # re-reading from the start (which can take seconds over NAS).
     if has_cues and kept_proc is not None:
         try:
             kept_proc.stdout.close()
@@ -796,11 +761,10 @@ def process_container(input_path: str, out_dir: str, mode: str,
             "indexed":    bool(t.get("indexed")),
         })
 
-    # Video stream probe via ffprobe (advisory only).
     ffprobe_path = check_ffprobe()
     video_info = probe_video_stream(ffprobe_path, input_path) if ffprobe_path else None
 
-    # === Phase 2: Single-pass analysis ===
+    # Phase 2: single-pass analysis.
     preview_cache = {}  # ti -> list of display sets
     all_indices = list(range(len(tracks)))
 
@@ -814,7 +778,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                         budget=Budget(LISTING_BUDGET_S), has_cues=has_cues,
                         reuse_proc=kept_proc, reuse_tracks=raw_tracks)
 
-    # === Phase 3: Display track listing ===
+    # Phase 3: display track listing.
     has_bailed = _print_track_listing(tracks, video_info=video_info)
 
     if mode in ("validate", "validate-fast"):
@@ -831,7 +795,7 @@ def process_container(input_path: str, out_dir: str, mode: str,
                 _print_track_listing(tracks, video_info=video_info)
         return
 
-    # === Phase 4: Track selection (with [v] validate for bailed tracks) ===
+    # Phase 4: track selection (with [v] validate for bailed tracks).
     if tracks_arg is not None:
         if tracks_arg.lower() == "all":
             selected_indices = list(range(len(tracks)))
@@ -868,21 +832,20 @@ def process_container(input_path: str, out_dir: str, mode: str,
     else:
         selected_indices = list(range(len(tracks)))
 
-    # --- Display-set count ---
     if first is not None:
         max_ds = first
     elif sys.stdin.isatty():
         max_ds = select_count_interactive(has_cues=has_cues)
     else:
-        max_ds = None  # process all — backward-compatible default
+        max_ds = None  # process all, backward-compatible default
 
-    # When a time range is active, the analysis cache contains display
-    # sets from the beginning of the file — not the target range.
-    # Replace "cached" with a concrete count so we stream from the range.
+    # When a time range is active, the analysis cache holds display sets
+    # from the start of the file, not the target range. Replace "cached"
+    # with a concrete count so we stream from the range.
     if (start or end) and max_ds == "cached":
         max_ds = DEFAULT_INTERACTIVE_COUNT
 
-    # --- Resolve mode per track ---
+    # Resolve mode per track.
     if mode == "auto":
         track_modes = {}
         for ti in selected_indices:
@@ -929,15 +892,15 @@ def process_container(input_path: str, out_dir: str, mode: str,
     print(f"{bold('Mode:')} {mode_note}  |  {bold('Tonemap:')} {tonemap.capitalize()}  |  {bold('Output:')} {out_dir}/")
     print()
 
-    # === Phase 5: Extraction & rendering ===
+    # Phase 5: extraction and rendering.
 
     track_tags = _build_track_tags(tracks, selected_indices)
 
     total_saved = 0
 
-    # Batch path (no display-set limit) with multiple tracks:
-    # single-pass demuxed extraction avoids redundant MKV header / cues
-    # parsing and (for containers without cues) re-reading the file.
+    # Batch path (no limit) with multiple tracks: single-pass demuxed
+    # extraction avoids redundant MKV header/cues parsing and, for
+    # containers without cues, re-reading the file.
     if max_ds is None and len(selected_indices) > 1:
         total_saved = _batch_extract_no_cues(
             libpgs_path, input_path, selected_indices, tracks,
@@ -949,9 +912,9 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print()
         return
 
-    # Batch path with per-track limit and multiple tracks: single libpgs
-    # pass with reader-side limiting.  Tracks with enough cached analysis
-    # data are rendered from cache without streaming.
+    # Batch path with a per-track limit and multiple tracks: single libpgs
+    # pass with reader-side limiting. Tracks with enough cached analysis
+    # data render from cache without streaming.
     if (max_ds is not None and max_ds != "cached"
             and len(selected_indices) > 1):
         total_saved = _batch_extract_with_limit(
@@ -965,7 +928,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
         print()
         return
 
-    # Sequential path: single track, or cache-only mode.
     for ti in selected_indices:
         track = tracks[ti]
         folder_name = build_track_folder_name(ti, track)
@@ -979,14 +941,12 @@ def process_container(input_path: str, out_dir: str, mode: str,
         track_label = _track_label(track)
 
         if max_ds is not None and max_ds == "cached":
-            # Cache-only mode: use whatever was collected during analysis.
             if not content_ds:
                 print(f"  {dim(tag)}  {dim('No cached subtitles. Skipping.')}")
                 continue
             display_sets = cached
             effective_limit = DEFAULT_INTERACTIVE_COUNT
         elif max_ds is not None:
-            # Streaming path with limit (single track).
             # When a time range is active, cache is from the wrong range.
             if not (start or end) and len(content_ds) >= max_ds:
                 display_sets = cached
@@ -1003,7 +963,6 @@ def process_container(input_path: str, out_dir: str, mode: str,
                     continue
             effective_limit = max_ds
         else:
-            # Unlimited, single track.
             try:
                 ds_iter = stream_file(
                     libpgs_path, input_path,

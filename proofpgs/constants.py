@@ -4,9 +4,7 @@ import re
 import time
 
 
-# ---------------------------------------------------------------------------
 # PQ (ST 2084) constants
-# ---------------------------------------------------------------------------
 
 PQ_M1 = 0.1593017578125
 PQ_M2 = 78.84375
@@ -14,16 +12,12 @@ PQ_C1 = 0.8359375
 PQ_C2 = 18.8515625
 PQ_C3 = 18.6875
 
-# ---------------------------------------------------------------------------
 # Recognised file extensions
-# ---------------------------------------------------------------------------
 
 SUP_EXTENSIONS = {".sup"}
 CONTAINER_EXTENSIONS = {".mkv", ".mk3d", ".m2ts"}
 
-# ---------------------------------------------------------------------------
 # Timestamp parsing
-# ---------------------------------------------------------------------------
 
 # Matches HH:MM:SS.ms, MM:SS.ms, SS.ms, or plain seconds (e.g. 300, 5.5).
 _TIMESTAMP_RE = re.compile(
@@ -54,15 +48,12 @@ def parse_timestamp(ts: str) -> float:
     return float(m.group("s3"))
 
 
-# ---------------------------------------------------------------------------
 # Analysis budget
-# ---------------------------------------------------------------------------
 
 # Wallclock budget for the track-listing analysis phase (seconds).
 # libpgs is killed if analysis takes longer than this.
 LISTING_BUDGET_S = 10.0
 
-# Target display sets per track for analysis.
 ANALYSIS_MAX_DS = 125
 
 # Grace period (seconds) after the last track validation before
@@ -97,17 +88,13 @@ class Budget:
         return self._start + self._total
 
 
-# ---------------------------------------------------------------------------
 # Extraction defaults
-# ---------------------------------------------------------------------------
 
 # Default number of content display sets to render when the user
 # accepts the interactive "cached" default (no additional extraction).
 DEFAULT_INTERACTIVE_COUNT = 10
 
-# ---------------------------------------------------------------------------
 # Rendering
-# ---------------------------------------------------------------------------
 
 # PNG compression level (0-9).  Lower = faster encoding, larger files.
 # Level 1 is a good balance for transient inspection PNGs.

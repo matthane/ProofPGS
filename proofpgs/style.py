@@ -1,4 +1,4 @@
-"""Terminal styling — muted truecolor palette, zero dependencies."""
+"""Terminal styling. Muted truecolor palette, zero dependencies."""
 
 import os
 import re
@@ -33,7 +33,7 @@ def _fg(r, g, b):
     return f"\033[38;2;{r};{g};{b}m" if _use_color else ""
 
 
-# --- Palette (muted, btop-inspired) ---
+# Palette (muted, btop-inspired)
 _RESET = "\033[0m" if _use_color else ""
 # Combine bold with an explicit 24-bit white foreground in a single SGR
 # sequence.  Bare \033[1m or \033[1;97m often renders only as "bright"
@@ -46,13 +46,13 @@ _WARN    = _fg(220, 180,  90)   # soft amber
 _SUCCESS = _fg(115, 190, 120)   # soft green
 _INFO    = _fg(130, 160, 210)   # soft blue
 _DIM     = _fg(110, 110, 120)   # dim text
-# Dim slate paired with bold weight — used for muted brand labels where the
+# Dim slate paired with bold weight. Used for muted brand labels where the
 # glyphs should still carry the bold font face.
 _DIM_BOLD = "\033[38;2;110;110;120;1m" if _use_color else ""
 _BORDER  = _fg(80,   85,  95)   # dark gray borders
 
 
-# --- Semantic helpers ---
+# Semantic helpers
 
 def error(text):
     return f"{_ERROR}{text}{_RESET}"
@@ -79,13 +79,11 @@ def dim_bold(text):
     return f"{_DIM_BOLD}{text}{_RESET}"
 
 
-# --- Cursor control (always active on TTY, silent when piped) ---
+# Cursor control (always active on TTY, silent when piped)
 CURSOR_UP_CLEAR = "\033[A\033[K" if _is_tty else ""
 
 
-# ---------------------------------------------------------------------------
 # Box drawing and status glyphs
-# ---------------------------------------------------------------------------
 
 # Pretty (UTF-8) and ASCII fallback glyph tables.  Selected by _use_unicode,
 # which is gated the same way as color: TTY + no NO_COLOR.
@@ -95,7 +93,7 @@ _GLYPH_UNICODE = {
     "ok": "✓", "err": "✗",
     "dot": "•",
     "rule": "·",
-    "warn": "⚠",  # warning sign — mismatch / caution
+    "warn": "⚠",  # warning sign, mismatch / caution
 }
 _GLYPH_ASCII = {
     "tl": "+", "tr": "+", "bl": "+", "br": "+",
@@ -145,10 +143,10 @@ def _visible_len(s: str) -> int:
 def box_top(title: str = "", width: int = BOX_WIDTH) -> str:
     """Return the top border of a box, with an optional centered title.
 
-    The title is rendered via ``bold()``; the border
+    The title is rendered via ``bold()``. The border
     uses the dim slate color so the frame stays quiet.
     """
-    inner = width - 2  # chars between corners
+    inner = width - 2
     if title:
         label = f" {title} "
         label_len = len(label)
@@ -174,24 +172,22 @@ def box_bottom(width: int = BOX_WIDTH) -> str:
 
 
 def box_row(content: str = "", width: int = BOX_WIDTH) -> str:
-    """Return a single box row: ``│ content<pad> │``.
+    """Return a single box row: ``| content<pad> |``.
 
     Padding is computed from the *visible* width of *content* (ANSI
     escapes and zero-width/wide characters handled), so rows stay aligned
     even when they contain colored badges or CJK track titles.  Content
     that overflows the interior is truncated at the visible-length level.
     """
-    inner = width - 4  # subtract "│ " + " │"
+    inner = width - 4
     vlen = _visible_len(content)
     if vlen > inner:
-        # Truncate to inner width.  Walk characters, counting visible
-        # columns; preserve ANSI escapes and append a reset at the end.
+        # Truncate to inner width, preserving ANSI escapes so color
+        # codes survive; only printable columns count toward the limit.
         plain_pos = 0
         out = []
         i = 0
         s = content
-        # Flush any trailing escapes, but stop emitting printable chars
-        # once we hit the limit.
         while i < len(s) and plain_pos < inner:
             m = _ANSI_RE.match(s, i)
             if m:
@@ -213,35 +209,35 @@ def box_row(content: str = "", width: int = BOX_WIDTH) -> str:
 
 
 def box_blank(width: int = BOX_WIDTH) -> str:
-    """Return an empty interior row — used for breathing room inside a box."""
+    """Return an empty interior row, used for breathing room inside a box."""
     return box_row("", width)
 
 
 def box_sep(width: int = BOX_WIDTH) -> str:
-    """Return a dotted divider row: ``│ ········ │``.
+    """Return a dotted divider row: ``| ........ |``.
 
     Used between groups of content inside a box (e.g. between tracks in
     the listing) when a blank row is too quiet to read as a separator.
     """
-    inner = width - 4  # subtract "│ " + " │"
+    inner = width - 4
     bar = border(_G['v'])
     rule = border(_G['rule'] * inner)
     return f"{bar} {rule} {bar}"
 
 
-# --- Status helpers (reserved for terminal outcomes only) ---
+# Status helpers (reserved for terminal outcomes only)
 
 def status_ok(text: str) -> str:
-    """Final success line: ``  ✓ text`` in green.
+    """Final success line: ``  [ok] text`` in green.
 
-    Reserved for terminal success messages — the thing the user reads
+    Reserved for terminal success messages, the thing the user reads
     right before the program exits cleanly.
     """
     return f"  {success(_G['ok'])} {success(text)}"
 
 
 def status_err(text: str) -> str:
-    """Fatal error line: ``  ✗ text`` in red.
+    """Fatal error line: ``  [x] text`` in red.
 
     Reserved for fatal errors where the program is about to abort.
     Non-fatal errors should use ``error()`` alone (color only, no glyph).

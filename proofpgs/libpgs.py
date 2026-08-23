@@ -1,8 +1,8 @@
 """Adapter module for the libpgs CLI tool.
 
 All interaction with the libpgs binary goes through this module.
-libpgs streams PGS data as NDJSON lines — one tracks header followed
-by display_set lines — which this module converts to the internal
+libpgs streams PGS data as NDJSON lines: one tracks header followed
+by display_set lines. This module converts them to the internal
 display-set format used throughout ProofPGS.
 """
 
@@ -34,15 +34,11 @@ def _cleanup_proc(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
-# ---------------------------------------------------------------------------
-# Binary discovery
-# ---------------------------------------------------------------------------
-
 def check_libpgs() -> str:
     """Find the libpgs binary.
 
     Search order:
-      1. proofpgs/bin/libpgs(.exe) — bundled with the project
+      1. proofpgs/bin/libpgs(.exe), bundled with the project
       2. shutil.which("libpgs") on PATH
 
     Returns the absolute path to the binary, or exits with an error.
@@ -64,17 +60,13 @@ def check_libpgs() -> str:
     sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# NDJSON helpers
-# ---------------------------------------------------------------------------
-
 def _convert_display_set(ds_json: dict) -> dict | None:
     """Convert a libpgs NDJSON display_set to internal structured format.
 
     Returns a dict with keys: pts, pts_ms, composition, palettes, objects.
     Bitmaps come pre-decoded from libpgs as base64 palette-index buffers.
     """
-    # Composition (None if malformed)
+    # Composition is None if malformed.
     comp_json = ds_json.get("composition")
     if comp_json is not None:
         composition = {
@@ -87,7 +79,7 @@ def _convert_display_set(ds_json: dict) -> dict | None:
     else:
         composition = None
 
-    # Palettes: flatten all palette entries into {eid: (Y, Cr, Cb, Alpha)}
+    # Flatten all palette entries into {eid: (Y, Cr, Cb, Alpha)}.
     palettes = {}
     for pal in ds_json.get("palettes", []):
         for entry in pal.get("entries", []):
@@ -98,7 +90,7 @@ def _convert_display_set(ds_json: dict) -> dict | None:
                 entry["alpha"],
             )
 
-    # Objects: decode bitmap from structured JSON, keyed by object ID
+    # Decode each object's bitmap, keyed by object ID.
     objects = {}
     for obj in ds_json.get("objects", []):
         bitmap_b64 = obj.get("bitmap")
@@ -120,10 +112,6 @@ def _convert_display_set(ds_json: dict) -> dict | None:
     }
 
 
-# ---------------------------------------------------------------------------
-# Track discovery
-# ---------------------------------------------------------------------------
-
 def discover_tracks(libpgs_path: str, input_path: str,
                     keep_alive: bool = False):
     """Spawn libpgs and read the tracks header.
@@ -132,7 +120,7 @@ def discover_tracks(libpgs_path: str, input_path: str,
     reading the header and a plain list of track dicts is returned.
 
     When *keep_alive* is True, the process is left running so the
-    caller can continue reading display sets from it — avoiding a
+    caller can continue reading display sets from it, avoiding a
     second full read for slow sources (NAS, non-indexed files).
     Returns ``(tracks, proc)``; the caller is responsible for closing
     and killing *proc*.
@@ -176,10 +164,6 @@ def discover_tracks(libpgs_path: str, input_path: str,
     return tracks
 
 
-# ---------------------------------------------------------------------------
-# Single-track streaming
-# ---------------------------------------------------------------------------
-
 def stream_file(libpgs_path: str, input_path: str,
                 track_id: int = None,
                 max_ds: int = None,
@@ -197,12 +181,12 @@ def stream_file(libpgs_path: str, input_path: str,
 
     Args:
         libpgs_path: Path to the libpgs binary.
-        input_path:  Path to .sup file or container.
-        track_id:    Track ID to extract (None = first/only track).
-        max_ds:      Stop after this many *content* display sets
-                     (those with object data). None = read all.
-        start:       Start timestamp for targeted extraction (None = beginning).
-        end:         End timestamp for targeted extraction (None = end of file).
+        input_path:  Path to container file.
+        track_id: Track ID to extract (None = first/only track).
+        max_ds:   Stop after this many *content* display sets
+                  (those with object data). None = read all.
+        start:    Start timestamp for targeted extraction (None = beginning).
+        end:      End timestamp for targeted extraction (None = end of file).
 
     Yields:
         Display sets in internal format.
@@ -239,7 +223,6 @@ def stream_file(libpgs_path: str, input_path: str,
                     on_header(obj)
                 continue
 
-            # Skip the tracks header line
             if obj.get("type") == "tracks":
                 continue
 
@@ -263,10 +246,6 @@ def stream_file(libpgs_path: str, input_path: str,
     finally:
         _cleanup_proc(proc)
 
-
-# ---------------------------------------------------------------------------
-# Multi-track demuxed streaming (batch extraction)
-# ---------------------------------------------------------------------------
 
 class QueueIterator:
     """Wraps a Queue as an iterator, yielding items until a None sentinel."""
@@ -311,13 +290,12 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
     queue so the reader thread is never blocked putting to it.
 
     Args:
-        libpgs_path:  Path to the libpgs binary.
-        input_path:   Path to container file.
-        track_ids:    List of track IDs to stream.
-        max_ds:       Per-track content display-set limit (None = no limit).
-        queue_size:   Max items per queue before backpressure (default 64).
-        start:        Start timestamp for targeted extraction (None = beginning).
-        end:          End timestamp for targeted extraction (None = end of file).
+        libpgs_path: Path to the libpgs binary.
+        input_path:  Path to container file.
+        max_ds:     Per-track content display-set limit (None = no limit).
+        queue_size: Max items per queue before backpressure (default 64).
+        start:      Start timestamp for targeted extraction (None = beginning).
+        end:        End timestamp for targeted extraction (None = end of file).
     """
     cmd = [libpgs_path, "stream", input_path,
            "-t", ",".join(str(tid) for tid in track_ids)]
@@ -382,7 +360,7 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
                     content_counts[tid] += 1
                     if content_counts[tid] >= max_ds:
                         raw_queues[tid].put(ds)
-                        raw_queues[tid].put(None)  # sentinel
+                        raw_queues[tid].put(None)
                         with done_lock:
                             done_tracks.add(tid)
                             if len(done_tracks) >= len(track_ids):
@@ -393,7 +371,6 @@ def stream_file_multi_track(libpgs_path: str, input_path: str,
         except Exception:
             pass
         finally:
-            # Signal end-of-stream to any consumers not yet done.
             with done_lock:
                 for tid in track_ids:
                     if tid not in done_tracks:
@@ -489,14 +466,12 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
                         if tid in done_tracks:
                             if len(done_tracks) >= len(track_ids):
                                 break
-                            # Grace-period restart check.
                             if (last_completed_at is not None
                                     and time.monotonic() - last_completed_at
                                     >= ANALYSIS_RESTART_GRACE_S):
                                 break
                             continue
 
-                    # Skip display sets already forwarded in prior passes.
                     pass_ds_seen[tid] = pass_ds_seen.get(tid, 0) + 1
                     if pass_ds_seen[tid] <= total_forwarded[tid]:
                         continue
@@ -519,9 +494,8 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
                                     break
                             last_completed_at = time.monotonic()
 
-                    # Grace-period restart: a track completed and the
-                    # grace window elapsed — break to restart with fewer
-                    # tracks.
+                    # Grace period elapsed after a track completed; restart
+                    # with fewer tracks.
                     if (last_completed_at is not None
                             and time.monotonic() - last_completed_at
                             >= ANALYSIS_RESTART_GRACE_S):
@@ -530,7 +504,7 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
                                 if _DEBUG:
                                     print(f"\n  [DEBUG] Progressive: grace "
                                           f"expired, {len(done_tracks)}/"
-                                          f"{len(track_ids)} done — "
+                                          f"{len(track_ids)} done, "
                                           f"restarting", flush=True)
                                 break
             except Exception:
@@ -538,22 +512,19 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
             finally:
                 _cleanup_proc(proc)
 
-            # Update remaining tracks.
             with done_lock:
                 remaining_tids = [tid for tid in remaining_tids
                                   if tid not in done_tracks]
 
-            # If no tracks completed in this pass and remaining tracks
-            # exist, they likely have no more data — stop to avoid an
-            # infinite loop.
+            # No tracks completed and some remain: they likely have no more
+            # data, stop to avoid an infinite loop.
             if not newly_completed and remaining_tids:
                 if _DEBUG:
                     print(f"  [DEBUG] Progressive: no tracks completed, "
-                          f"{len(remaining_tids)} remaining — stopping",
+                          f"{len(remaining_tids)} remaining, stopping",
                           flush=True)
                 break
 
-        # Send sentinels for any tracks that didn't reach their limit.
         with done_lock:
             for tid in track_ids:
                 if tid not in done_tracks:
@@ -565,10 +536,6 @@ def stream_file_multi_track_progressive(libpgs_path: str, input_path: str,
 
     return iterators, reader, mark_done
 
-
-# ---------------------------------------------------------------------------
-# Multi-track streaming (analysis / all-track extraction)
-# ---------------------------------------------------------------------------
 
 def stream_all_tracks(libpgs_path: str, input_path: str,
                       track_ids: list = None,
@@ -590,7 +557,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
     (``ANALYSIS_RESTART_GRACE_S``) allows co-located language tracks
     at the same timestamps to also conclude before signalling the
     caller to restart with fewer tracks.  When False (e.g. containers
-    without MKV Cues), restarts are suppressed — concluded tracks are
+    without MKV Cues), restarts are suppressed. Concluded tracks are
     simply skipped in the loop and streaming continues until all
     tracks finish or the deadline/cap is reached.
 
@@ -672,7 +639,6 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
     last_check = 0.0
     last_concluded_at = None  # monotonic time of last track_check conclusion
 
-    # Pre-populate from existing_tracks (header already consumed).
     if existing_tracks:
         for t in existing_tracks:
             tid = t["track_id"]
@@ -692,7 +658,6 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             obj = json.loads(line)
 
             if obj.get("type") == "tracks":
-                # Initialize track_data for all known tracks
                 for t in obj.get("tracks", []):
                     tid = t["track_id"]
                     track_data.setdefault(tid, [])
@@ -710,13 +675,11 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             if tid is None:
                 continue
 
-            # Skip tracks that are already done
             if tid in completed_tracks:
                 if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
                     break
-                # Grace-period restart: concluded tracks exist but
-                # unconcluded tracks remain — check if we should
-                # restart with fewer tracks.
+                # Concluded tracks exist but others remain; restart with
+                # fewer tracks once the grace period elapses.
                 if (allow_restart
                         and last_concluded_at is not None
                         and time.monotonic() - last_concluded_at
@@ -725,7 +688,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                         print(f"\n  [DEBUG] Grace period expired "
                               f"(on skip), "
                               f"{len(completed_tracks)}/{len(track_data)}"
-                              f" tracks done — restarting", flush=True)
+                              f" tracks done, restarting", flush=True)
                     break
                 continue
 
@@ -739,7 +702,6 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
             if ds_has_content(ds):
                 content_counts[tid] += 1
 
-                # Per-track detection check
                 if track_check is not None and track_check(tid, track_data[tid]):
                     completed_tracks.add(tid)
                     concluded_tids.add(tid)
@@ -747,13 +709,11 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                     if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
                         break
 
-                # Safety cap
                 if max_ds_per_track is not None and content_counts[tid] >= max_ds_per_track:
                     completed_tracks.add(tid)
                     if len(completed_tracks) >= len(track_data) and len(track_data) > 0:
                         break
 
-            # Periodic checks (at most once per second)
             now = time.monotonic()
             if now - last_check >= 1.0:
                 last_check = now
@@ -763,9 +723,8 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                               flush=True)
                     break
 
-            # Grace-period restart: if tracks have concluded and the
-            # grace period has elapsed, break so the caller can restart
-            # libpgs with only the remaining tracks.
+            # Grace period elapsed after tracks concluded; break so the
+            # caller can restart libpgs with only the remaining tracks.
             if (allow_restart
                     and last_concluded_at is not None
                     and len(completed_tracks) < len(track_data)
@@ -773,7 +732,7 @@ def stream_all_tracks(libpgs_path: str, input_path: str,
                 if _DEBUG:
                     print(f"\n  [DEBUG] Grace period expired, "
                           f"{len(completed_tracks)}/{len(track_data)} "
-                          f"tracks done — restarting", flush=True)
+                          f"tracks done, restarting", flush=True)
                 break
 
     finally:

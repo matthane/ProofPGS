@@ -5,12 +5,9 @@
 
 ---
 
-The Presentation Graphic Stream (PGS) specification is used to show subtitles in
-Blu-ray movies. When a PGS subtitle stream is ripped from a Blu-ray disc it is
-usually saved in a file with the `.sup` extension (Subtitle Presentation).
+The Presentation Graphic Stream (PGS) specification is used to show subtitles in Blu-ray movies. When a PGS subtitle stream is ripped from a Blu-ray disc it is usually saved in a file with the `.sup` extension (Subtitle Presentation).
 
-A PGS is made of functional segments one after another. These segments share a
-common header followed by a type-specific payload.
+A PGS is made of functional segments one after another. These segments share a common header followed by a type-specific payload.
 
 ---
 
@@ -26,8 +23,7 @@ Every segment begins with this 13-byte header:
 | Segment Type | 1            | 0x14: PDS, 0x15: ODS, 0x16: PCS, 0x17: WDS, 0x80: END             |
 | Segment Size | 2            | Size of the payload that follows                                    |
 
-**Timestamps** have 90 kHz accuracy. To convert PTS to milliseconds, divide the
-value by 90. For example, PTS `0x0004C11C` = 311,580 / 90 = **3,462 ms**.
+**Timestamps** have 90 kHz accuracy. To convert PTS to milliseconds, divide the value by 90. For example, PTS `0x0004C11C` = 311,580 / 90 = **3,462 ms**.
 
 DTS is always zero in practice and can be ignored.
 
@@ -52,15 +48,14 @@ There are five segment types:
 A **Display Set (DS)** is a complete sub-picture definition, structured as:
 
 ```
-PCS → WDS → PDS → ODS → END
+PCS -> WDS -> PDS -> ODS -> END
 ```
 
-A DS may contain multiple WDS, PDS, and ODS segments. The PCS opens the set and
-the END segment closes it.
+A DS may contain multiple WDS, PDS, and ODS segments. The PCS opens the set and the END segment closes it.
 
 ---
 
-## Presentation Composition Segment (PCS) — 0x16
+## Presentation Composition Segment (PCS), 0x16
 
 The PCS (also called the *Control Segment*) defines a new display composition.
 
@@ -77,14 +72,9 @@ The PCS (also called the *Control Segment*) defines a new display composition.
 
 ### Composition States
 
-- **Epoch Start (0x80):** Defines a *new display*. Contains all segments needed
-  to show a new composition from scratch.
-- **Acquisition Point (0x40):** Defines a *display refresh*. Used to compose in
-  the middle of an Epoch. Includes new objects that replace old objects with the
-  same Object ID.
-- **Normal (0x00):** Defines a *display update*. Contains only segments with
-  elements that differ from the preceding composition. Commonly used to clear
-  the screen (Number of Composition Objects = 0) or to add new objects.
+- Epoch Start (0x80): defines a new display. Contains all segments needed to show a new composition from scratch.
+- Acquisition Point (0x40): defines a display refresh. Used to compose in the middle of an Epoch. Includes new objects that replace old objects with the same Object ID.
+- Normal (0x00): defines a display update. Contains only segments with elements that differ from the preceding composition. Commonly used to clear the screen (Number of Composition Objects = 0) or to add new objects.
 
 ### Composition Object (repeats per object)
 
@@ -100,18 +90,15 @@ The PCS (also called the *Control Segment*) defines a new display composition.
 | Object Cropping Width              | 2            | Crop width (only when cropped flag = 0x40)                 |
 | Object Cropping Height             | 2            | Crop height (only when cropped flag = 0x40)                |
 
-Cropping is used to progressively reveal a subtitle (e.g. showing a few words
-first, then the rest).
+Cropping is used to progressively reveal a subtitle (e.g. showing a few words first, then the rest).
 
-> **Note:** Up to 2 objects can be shown simultaneously per PCS, though PGS
-> supports up to 64 presentation objects in one epoch.
+Up to 2 objects can be shown simultaneously per PCS, though PGS supports up to 64 presentation objects in one epoch.
 
 ---
 
-## Window Definition Segment (WDS) — 0x17
+## Window Definition Segment (WDS), 0x17
 
-Defines one or more rectangular screen areas (*windows*) where sub-pictures are
-drawn. Fields from Window ID through Window Height repeat for each window.
+Defines one or more rectangular screen areas (windows) where sub-pictures are drawn. Fields from Window ID through Window Height repeat for each window.
 
 | Name                       | Size (bytes) | Description                            |
 |----------------------------|:------------:|----------------------------------------|
@@ -124,7 +111,7 @@ drawn. Fields from Window ID through Window Height repeat for each window.
 
 ---
 
-## Palette Definition Segment (PDS) — 0x14
+## Palette Definition Segment (PDS), 0x14
 
 Defines a colour palette. The last five fields repeat for each palette entry.
 
@@ -132,54 +119,50 @@ Defines a colour palette. The last five fields repeat for each palette entry.
 |----------------------------|:------------:|----------------------------------------|
 | Palette ID                 | 1            | ID of the palette                      |
 | Palette Version Number     | 1            | Version within the Epoch               |
-| Palette Entry ID           | 1            | Entry number (0–255)                   |
+| Palette Entry ID           | 1            | Entry number (0-255)                   |
 | Luminance (Y)              | 1            | Y value                                |
 | Colour Difference Red (Cr) | 1            | Cr value                               |
 | Colour Difference Blue (Cb)| 1            | Cb value                               |
 | Transparency (Alpha)       | 1            | Alpha value (0 = fully transparent)    |
 
-> **Note:** The PGS byte order is **Y, Cr, Cb** — not Y, Cb, Cr.
+The PGS byte order is **Y, Cr, Cb**, not Y, Cb, Cr.
 
 ---
 
-## Object Definition Segment (ODS) — 0x15
+## Object Definition Segment (ODS), 0x15
 
-Defines a graphics object (a rendered subtitle image on a transparent
-background). The image data is compressed with Run-Length Encoding (RLE).
+Defines a graphics object (a rendered subtitle image on a transparent background). The image data is compressed with Run-Length Encoding (RLE).
 
 | Name                   | Size (bytes) | Description                                               |
-|------------------------|:------------:|-----------------------------------------------------------|
+|------------------------|:------------:|------------------------------------------------------------|
 | Object ID              | 2            | ID of this object                                         |
 | Object Version Number  | 1            | Version of this object                                    |
 | Last in Sequence Flag  | 1            | 0x40: Last, 0x80: First, 0xC0: First and last             |
 | Object Data Length     | 3            | Length of RLE data **including** the 4 bytes for Width+Height |
 | Width                  | 2            | Width of the image                                        |
 | Height                 | 2            | Height of the image                                       |
-| Object Data            | variable     | RLE-compressed image data (length = Object Data Length − 4)|
+| Object Data            | variable     | RLE-compressed image data (length = Object Data Length - 4)|
 
-> **Note:** Object Data Length includes the 4 bytes for Width and Height.
-> The actual RLE data size is Object Data Length minus 4.
+Object Data Length includes the 4 bytes for Width and Height. The actual RLE data size is Object Data Length minus 4.
 
-Large objects may be split across multiple ODS fragments. The sequence flag
-indicates whether the segment is the first, last, or only fragment.
+Large objects may be split across multiple ODS fragments. The sequence flag indicates whether the segment is the first, last, or only fragment.
 
 ### RLE Encoding
 
-The image data uses Run-Length Encoding as defined in
-[US Patent 7912305 B1](https://www.google.com/patents/US7912305):
+The image data uses Run-Length Encoding as defined in [US Patent 7912305 B1](https://www.google.com/patents/US7912305):
 
 | Byte Pattern                                     | Meaning                                    |
 |--------------------------------------------------|--------------------------------------------|
 | `CCCCCCCC`                                       | One pixel in colour C                      |
-| `00000000 00LLLLLL`                               | L pixels in colour 0 (L: 1–63)            |
-| `00000000 01LLLLLL LLLLLLLL`                      | L pixels in colour 0 (L: 64–16383)        |
-| `00000000 10LLLLLL CCCCCCCC`                      | L pixels in colour C (L: 3–63)            |
-| `00000000 11LLLLLL LLLLLLLL CCCCCCCC`             | L pixels in colour C (L: 64–16383)        |
+| `00000000 00LLLLLL`                               | L pixels in colour 0 (L: 1-63)            |
+| `00000000 01LLLLLL LLLLLLLL`                      | L pixels in colour 0 (L: 64-16383)        |
+| `00000000 10LLLLLL CCCCCCCC`                      | L pixels in colour C (L: 3-63)            |
+| `00000000 11LLLLLL LLLLLLLL CCCCCCCC`             | L pixels in colour C (L: 64-16383)        |
 | `00000000 00000000`                               | End of line                                |
 
 ---
 
-## End of Display Set Segment (END) — 0x80
+## End of Display Set Segment (END), 0x80
 
 Always has a segment size of zero. Marks the end of a Display Set.
 
@@ -213,9 +196,9 @@ A complete Display Set from a real `.sup` file:
 | Palette Update              | False                      |
 | Palette ID                  | 0                          |
 | Composition Objects         | 1                          |
-| → Object ID                | 0                          |
-| → Window ID                | 0                          |
-| → Position                 | (773, 108)                 |
+| -> Object ID                | 0                          |
+| -> Window ID                | 0                          |
+| -> Position                 | (773, 108)                 |
 
 **2. WDS** (offset 0x00348a30)
 
@@ -223,9 +206,9 @@ A complete Display Set from a real `.sup` file:
 |------------------------|----------------------|
 | Number of Windows      | 2                    |
 | Window 0 Position      | (773, 108)           |
-| Window 0 Size          | 377 × 43             |
+| Window 0 Size          | 377x43               |
 | Window 1 Position      | (739, 928)           |
-| Window 1 Size          | 472 × 43             |
+| Window 1 Size          | 472x43               |
 
 **3. PDS** (offset 0x00348a50)
 
@@ -239,11 +222,10 @@ A complete Display Set from a real `.sup` file:
 | Object ID              | 0                              |
 | Sequence Flag          | First and last (0xC0)          |
 | Object Data Length     | 0x0021BB bytes                 |
-| Image Size             | 377 × 43                       |
+| Image Size             | 377x43                         |
 
 **5. END** (offset 0x0034acc9)
 
 - Segment Size: 0
 
-This Display Set shows a 377×43 image at screen position (773, 108) starting at
-17 minutes 11.822 seconds.
+This Display Set shows a 377x43 image at screen position (773, 108) starting at 17 minutes 11.822 seconds.

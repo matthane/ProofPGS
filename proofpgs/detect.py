@@ -4,27 +4,29 @@ Analyzes raw YCbCr palette entries to determine whether a PGS stream was
 mastered for SDR (BT.709 + BT.1886) or HDR (BT.2020 + PQ).
 
 Only palette entries that are both visible (alpha >= 32) and actually
-referenced by the display set's bitmap are analyzed.  PGS authoring tools
-can define high-alpha palette entries that are never rendered — persistent
-"ghost" entries that would poison detection if included.  When bitmap data
+referenced by the display set's bitmap are analyzed. PGS authoring tools
+can define high-alpha palette entries that are never rendered, persistent
+"ghost" entries that would poison detection if included. When bitmap data
 is unavailable, all visible entries are considered as a fallback.
 
-Primary signal: **PQ plausibility test**.  For each bitmap-referenced
-palette entry with Y > 50, decode YCbCr → R'G'B' using the BT.2020
-matrix and take the highest channel value.  If this value exceeds the PQ
+Primary signal: PQ plausibility test. For each bitmap-referenced
+palette entry with Y > 50, decode YCbCr to R'G'B' using the BT.2020
+matrix and take the highest channel value. If this value exceeds the PQ
 code value for ~1000 nits (~0.75), the PQ interpretation implies luminance
-far too high for subtitle content → gamma-encoded SDR, not PQ-encoded HDR.
+far too high for subtitle content, so it is gamma-encoded SDR, not
+PQ-encoded HDR.
 
 This test is particularly effective for colored text (gold, yellow, cyan)
-where Y-value-only thresholds are ambiguous.  For example, SDR gold text
-at Y=178 decodes to R'≈0.92 under BT.2020, giving ~4800 nits in PQ —
-obviously SDR.  Genuine HDR text at 203 nits gives R'≈0.58 → ~200 nits.
+where Y-value-only thresholds are ambiguous. For example, SDR gold text
+at Y=178 decodes to R' of about 0.92 under BT.2020, giving ~4800 nits in
+PQ, obviously SDR. Genuine HDR text at 203 nits gives R' of about 0.58,
+or ~200 nits.
 
 Secondary signals: Y-value thresholds and achromatic entry analysis
 handle cases where the PQ test is inconclusive.
 """
 
-# --- BT.2020 YCbCr → R'G'B' matrix coefficients (limited-range normalised) ---
+# BT.2020 YCbCr -> R'G'B' matrix coefficients (limited-range normalised)
 # R' = Yn + 1.4746 * Crn
 # G' = Yn - 0.1645 * Cbn - 0.5713 * Crn
 # B' = Yn + 1.8814 * Cbn
@@ -33,20 +35,16 @@ _BT2020_CB_G = -0.1645
 _BT2020_CR_G = -0.5713
 _BT2020_CB_B = 1.8814
 
-# PQ code value thresholds (0–1 normalised, not limited-range Y).
-# Computed via PQ OETF:  1000 nits → 0.7518,  400 nits → 0.6375.
-#
-# _PQ_IMPLAUSIBLE: if the max PQ channel value across all visible palette
-#   entries exceeds this after BT.2020 decode, the PQ interpretation
-#   gives >1000 nits — far too bright for subtitle content.  Almost
+# PQ code value thresholds (0-1 normalised, not limited-range Y).
+# Computed via PQ OETF: 1000 nits -> 0.7518, 400 nits -> 0.6375.
+# _PQ_IMPLAUSIBLE: above this, PQ decode implies >1000 nits, almost
 #   certainly SDR.
-# _PQ_PLAUSIBLE:   if the max value stays below this, the PQ
-#   interpretation gives <400 nits — perfectly reasonable for HDR
-#   subtitle content at or near reference white (203 nits).
+# _PQ_PLAUSIBLE: below this, PQ decode implies <400 nits, reasonable
+#   for HDR subtitle content at or near reference white (203 nits).
 _PQ_IMPLAUSIBLE = 0.75   # ~1000 nits
 _PQ_PLAUSIBLE = 0.65     # ~400 nits
 
-# Y-value thresholds (limited-range Y, 8-bit) — secondary signal.
+# Y-value thresholds (limited-range Y, 8-bit). Secondary signal.
 _Y_SDR_HIGH = 210   # SDR yellow = 219, SDR white = 235
 _Y_HDR_HIGH = 170   # HDR 1000 nits = 181, HDR ref white = 143
 _Y_SDR_MED = 195    # medium-confidence boundary in ambiguous zone
@@ -59,7 +57,7 @@ _ACHRO_TOL = 3
 _MIN_Y = 50
 
 # Minimum alpha to consider a palette entry visible.  PGS fade-in frames
-# define the full palette but with near-zero alpha (1–11) on most entries.
+# define the full palette but with near-zero alpha (1-11) on most entries.
 # These are functionally invisible and should not influence detection.
 # 32 (~12.5% opacity) excludes anti-aliasing fringe and fade-in entries
 # while keeping any genuinely rendered content.
@@ -72,7 +70,7 @@ def _bt2020_max_channel(y, cr, cb):
     Returns the maximum of (R', G', B') after BT.2020 matrix decode.
     This value represents a PQ code if the content is HDR, or a
     gamma-encoded value if SDR.  In either case, values above ~0.75
-    imply >1000 nit luminance under PQ — implausible for subtitles.
+    imply >1000 nit luminance under PQ, implausible for subtitles.
     """
     yn = (y - 16.0) / 219.0
     crn = (cr - 128.0) / 224.0
@@ -117,11 +115,9 @@ def detect_from_palettes(display_sets: list) -> dict:
             continue
         num_palettes += 1
 
-        # Collect palette entry IDs actually referenced by the bitmap.
-        # PGS authoring tools can include high-alpha palette entries that
-        # are never rendered (ghost entries).  Only bitmap-referenced
-        # entries are trustworthy for detection.  If no bitmap data is
-        # available, fall back to considering all visible entries.
+        # Only bitmap-referenced entries are trustworthy (unreferenced
+        # entries can be authoring-tool ghosts); fall back to all visible
+        # entries if no bitmap data is available.
         used_ids = set()
         for obj in ds.get("objects", {}).values():
             if obj.get("bitmap"):
@@ -141,24 +137,20 @@ def detect_from_palettes(display_sets: list) -> dict:
                 if ch > max_pq_channel:
                     max_pq_channel = ch
 
-            # Achromatic check: Cb and Cr both near 128
             if abs(cb - 128) <= _ACHRO_TOL and abs(cr - 128) <= _ACHRO_TOL:
                 if max_achromatic_y is None or y > max_achromatic_y:
                     max_achromatic_y = y
 
-    # --- Decision logic ---
     if num_palettes == 0 or not has_bright:
         return _result(None, "low", max_y, max_achromatic_y,
                        max_pq_channel, num_palettes)
 
-    # 1. PQ implausibility test (strongest SDR signal).
-    #    If the max PQ channel value exceeds 0.75, at least one visible
-    #    entry decodes to >1000 nits under PQ — almost certainly SDR.
+    # Strongest SDR signal, checked first.
     if max_pq_channel > _PQ_IMPLAUSIBLE:
         return _result("sdr", "high", max_y, max_achromatic_y,
                        max_pq_channel, num_palettes)
 
-    # 2. Clear Y-value signals (achromatic preferred, then global max).
+    # Achromatic Y is preferred over the global max when available.
     ref_y = max_achromatic_y if max_achromatic_y is not None and max_achromatic_y > _MIN_Y else None
 
     if ref_y is not None and ref_y >= _Y_SDR_HIGH:
@@ -175,15 +167,13 @@ def detect_from_palettes(display_sets: list) -> dict:
         return _result("hdr", "high", max_y, max_achromatic_y,
                        max_pq_channel, num_palettes)
 
-    # 3. PQ plausibility test (strong HDR signal).
-    #    If all channels stay below 0.65, the PQ interpretation gives
-    #    <400 nits — perfectly reasonable for HDR subtitles.
+    # Strong HDR signal.
     if max_pq_channel <= _PQ_PLAUSIBLE:
         return _result("hdr", "high", max_y, max_achromatic_y,
                        max_pq_channel, num_palettes)
 
-    # 4. Ambiguous zone (170 < max_y < 210, 0.65 < max_pq < 0.75).
-    #    Fall back to medium-confidence Y threshold.
+    # Ambiguous zone (170 < max_y < 210, 0.65 < max_pq < 0.75): fall
+    # back to the medium-confidence Y threshold.
     if max_y >= _Y_SDR_MED:
         return _result("sdr", "medium", max_y, max_achromatic_y,
                        max_pq_channel, num_palettes)
@@ -193,7 +183,6 @@ def detect_from_palettes(display_sets: list) -> dict:
 
 def _result(verdict, confidence, max_y, max_achromatic_y,
             max_pq_channel, num_palettes):
-    """Build a detection result dict."""
     return {
         "verdict": verdict,
         "confidence": confidence,

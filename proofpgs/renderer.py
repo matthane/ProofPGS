@@ -50,13 +50,11 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
     if not comp["objects"]:
         return None, pts_ms
 
-    # Build colour LUT
     if mode == "hdr":
         lut = decode_palette_hdr(palette, tonemap)
     else:
         lut = decode_palette_sdr(palette)
 
-    # Render onto full-frame canvas
     canvas_w = comp["video_width"]
     canvas_h = comp["video_height"]
     canvas   = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
@@ -91,7 +89,7 @@ def render_ds(ds: dict, mode: str, tonemap: str) -> tuple:
 def _filter_thin_runs(mask: np.ndarray, min_thickness: int) -> np.ndarray:
     """Zero out contiguous True runs shorter than *min_thickness*.
 
-    Used to ignore thin artifact strips (e.g. 1–2 px palette ramps baked
+    Used to ignore thin artifact strips (e.g. 1-2 px palette ramps baked
     into full-frame PGS bitmaps by some authoring tools) that would
     otherwise inflate the crop bounding box.
     """
@@ -127,13 +125,10 @@ def _content_bbox(alpha: np.ndarray, pad: int = 8):
     rows = _filter_thin_runs(np.any(alpha > 0, axis=1), _CROP_MIN_THICKNESS)
     if not rows.any():
         return None
-    # Recompute columns using only the surviving rows.
     cols = _filter_thin_runs(
         np.any(alpha[rows, :] > 0, axis=0), _CROP_MIN_THICKNESS)
     if not cols.any():
         return None
-    # Recompute rows using only surviving columns, in case thin
-    # vertical artifacts inflated the row span.
     rows = _filter_thin_runs(
         np.any(alpha[:, cols] > 0, axis=1), _CROP_MIN_THICKNESS)
     if not rows.any():
@@ -161,7 +156,7 @@ def crop_to_content(img: Image.Image, pad: int = 8) -> Image.Image:
 def _render_check_icon(r, color):
     """Render a smooth check-circle icon via 4x oversampling.
 
-    Reproduces the Phosphor 'check-circle' regular icon: an outlined
+    Reproduces the Phosphor 'check-circle' regular icon as an outlined
     ring with a proportional checkmark, drawn at 4x resolution and
     downsampled with LANCZOS for clean antialiasing.
     """
@@ -188,7 +183,7 @@ def _render_check_icon(r, color):
 def _render_x_icon(r, color):
     """Render a smooth x-circle icon via 4x oversampling.
 
-    Reproduces the Phosphor 'x-circle' regular icon: an outlined ring
+    Reproduces the Phosphor 'x-circle' regular icon as an outlined ring
     with a proportional X, drawn at 4x resolution and downsampled with
     LANCZOS for clean antialiasing.
     """
@@ -264,7 +259,7 @@ def _build_compare_resources(detection, tonemap, input_name, track_name):
 
 
 def _render_and_save(ds, i, out_dir, mode, tonemap, nocrop):
-    """Worker: render one display set and save PNG.
+    """Render one display set and save PNG (thread-pool worker).
 
     Returns (i, pts_ms, fname) or (i, pts_ms, None) on skip.
     """
@@ -286,7 +281,7 @@ def _render_and_save(ds, i, out_dir, mode, tonemap, nocrop):
 
 
 def _render_and_save_compare(ds, i, out_dir, nocrop, res):
-    """Worker: render one display set in compare mode and save PNG.
+    """Render one display set in compare mode and save PNG (thread-pool worker).
 
     Returns (i, pts_ms, fname) or (i, pts_ms, None) on skip.
     """
@@ -409,8 +404,8 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
 
     *display_sets* may be a list or any iterable (including a generator).
     When a generator is passed, rendering starts as display sets arrive
-    rather than waiting for extraction to finish — overlapping I/O-bound
-    extraction with CPU-bound rendering.
+    rather than waiting for extraction to finish. This overlaps
+    I/O-bound extraction with CPU-bound rendering.
 
     Args:
         limit:    Max number of *rendered* images to produce.  Display sets
@@ -426,7 +421,7 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
     os.makedirs(out_dir, exist_ok=True)
     num_threads = _resolve_threads(threads)
 
-    # --- Build worker function ---
+    # Build worker function.
     if mode == "compare":
         res = _build_compare_resources(detection, tonemap, input_name,
                                        track_name)
@@ -444,7 +439,7 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
     def _print_result(idx, pts_ms, fname):
         print(f"{tag_prefix}{dim(f'[{idx:04d}]')}  {pts_ms / 1000.0:8.3f}s  {dim('->')}  {info(f'{folder_hint}/{fname}')}")
 
-    # --- Sequential fast path (no threading overhead) ---
+    # Sequential fast path (no threading overhead).
     if num_threads <= 1:
         saved = 0
         content_count = 0
@@ -459,9 +454,7 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
                     break
         return saved
 
-    # --- Parallel path with ordered output ---
-    # Consume the iterable incrementally, submitting work to the pool
-    # as display sets arrive.  Results are buffered and printed in order.
+    # Parallel path with ordered output.
     saved = 0
     results_buf = {}
     next_to_print = 0
@@ -481,7 +474,6 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
                 if limit is not None and content_count >= limit:
                     break
 
-            # Opportunistically drain completed futures (non-blocking)
             done_futs = [f for f in futures if f.done()]
             for f in done_futs:
                 s = futures.pop(f)
@@ -497,7 +489,6 @@ def process_display_sets(display_sets, out_dir: str, mode: str,
                         _print_result(idx, pts_ms, fname)
                     next_to_print += 1
 
-        # Drain remaining futures
         for fut in as_completed(futures):
             s = futures[fut]
             try:

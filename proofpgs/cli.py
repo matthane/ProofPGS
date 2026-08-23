@@ -27,7 +27,7 @@ def main():
 
 def _main():
     parser = argparse.ArgumentParser(
-        description="PGS subtitle decoder — accepts .sup files or video "
+        description="PGS subtitle decoder, accepts .sup files or video "
                     "containers (MKV, M2TS, etc.).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -72,7 +72,6 @@ def _main():
                              "(default: auto, up to 8)")
     args = parser.parse_args()
 
-    # Validate timestamps early.
     for flag in ("start", "end"):
         val = getattr(args, flag)
         if val is not None:
